@@ -25,3 +25,6 @@ socksio==1.0.0
 soupsieve==2.8.1
 typing_extensions==4.15.0
 urllib3==2.6.2
+torch==2.3.0
+pyyaml==6.0.1
+psutil==5.9.8

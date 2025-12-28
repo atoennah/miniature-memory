@@ -1,22 +1,23 @@
 # NanoGPT-Lite Configuration (Small)
 
-# Model parameters
-n_embd: 256
-n_head: 4
-n_layer: 7
-block_size: 256
+model:
+  n_embd: 256
+  n_head: 4
+  n_layer: 7
+  block_size: 256
+  dropout: 0.2
 
-# Tokenizer
-tokenizer: character-level
+tokenizer:
+  type: character-level
 
-# Training
-batch_size: 32
-learning_rate: 1e-4
-betas: [0.9, 0.95]
-epochs: 1
+training:
+  batch_size: 32
+  learning_rate: 1e-4
+  betas: [0.9, 0.95]
+  epochs: 1
 
-# Inference
-precision: FP16
-temperature: 0.8
-top_p: 0.9
-repetition_penalty: 1.1
+inference:
+  precision: FP16
+  temperature: 0.8
+  top_p: 0.9
+  repetition_penalty: 1.1
