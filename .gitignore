@@ -1,5 +1,6 @@
-# Generated data files
-dataset/metadata/urls.jsonl
+# Generated data files to ignore
+/dataset/processed/*
+/dataset/rejected/*
 
 # Python cache
 __pycache__/
