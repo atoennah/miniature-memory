@@ -15,7 +15,7 @@ httpcore==1.0.9
 httpx==0.28.1
 hyperframe==6.1.0
 idna==3.11
--e git+https://github.com/atoennah/miniature-memory@899d81bbd9bfaec312f85d4b283d20cecded5a29#egg=lewd_story_scraper
+-e .
 lxml==6.0.2
 playwright==1.55.0
 primp==0.15.0
@@ -25,3 +25,6 @@ socksio==1.0.0
 soupsieve==2.8.1
 typing_extensions==4.15.0
 urllib3==2.6.2
+torch==2.3.0
+pyyaml==6.0.1
+psutil==5.9.8
