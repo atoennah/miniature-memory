@@ -1,1 +1,4 @@
+ddgs
+requests
+beautifulsoup4
 torch
