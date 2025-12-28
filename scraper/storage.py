@@ -4,12 +4,15 @@ import hashlib
 from urllib.parse import urlparse
 from datetime import datetime
 
+# Define a constant for the maximum length of a filename component
+MAX_FILENAME_COMPONENT_LENGTH = 50
+
 def _sanitize_component(component: str) -> str:
     """Sanitizes a string to be used in a filename."""
     # Remove non-alphanumeric characters
     component = re.sub(r'[^a-zA-Z0-9_-]', '', component)
     # Truncate to a reasonable length to avoid overly long filenames
-    return component[:50].lower()
+    return component[:MAX_FILENAME_COMPONENT_LENGTH].lower()
 
 def save_raw_text(url: str, text_content: str) -> str | None:
     """
