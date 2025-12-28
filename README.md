@@ -1,3 +1,6 @@
+# miniature-memory
+
+This project is dedicated to building, studying, and deploying language models for adult entertainment. For more information on the project's purpose, scope, and rules, please see `CONTRIBUTING.md`.
 NanoGPT-Lite: Constraint-First Storytelling Model
 
 A from-scratch NanoGPT implementation optimized for ultra-low RAM environments (≈2 GB), focused on long-form narrative coherence under tight constraints.
