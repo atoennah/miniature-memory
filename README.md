@@ -54,9 +54,46 @@ The goal is to push NanoGPT as far as possible under minimal resources.
 │   ├── train.py
 │   └── configs/
 │
+├── run.py
+├── setup.sh
 ├── NanoGPT_Training.ipynb
 └── README.md
 ```
+
+## Setup
+
+To set up the environment, run the `setup.sh` script:
+```bash
+./setup.sh
+```
+This will install all the necessary dependencies.
+
+## Training Workflow
+
+The entire data processing and training pipeline can be run using the unified `run.py` script.
+
+### Local / Linux
+
+To run the entire pipeline, simply execute:
+```bash
+python run.py
+```
+
+You can also skip specific steps using command-line flags:
+```bash
+# Skip validation and cleaning
+python run.py --skip-validation --skip-cleaning
+
+# Run only the training step
+python run.py --skip-validation --skip-cleaning --skip-preparation
+```
+
+### Google Colab
+
+- Open `NanoGPT_Training.ipynb`
+- Upload or clone repository
+- Run all cells top to bottom
+- Training artifacts are saved periodically
 
 ## Dataset Design
 
@@ -97,24 +134,6 @@ All cleaned and processed data can be re-generated from raw data at any time.
 6.  Log source and timestamp
 
 Scraping is designed to be repeatable and incremental.
-
-## Training Workflow
-
-### Local / Linux
-
-```bash
-python scripts/validate_raw.py
-python scripts/clean_dataset.py
-python scripts/prepare_data.py
-python training/train.py --config training/configs/small.yaml
-```
-
-### Google Colab
-
-- Open `NanoGPT_Training.ipynb`
-- Upload or clone repository
-- Run all cells top to bottom
-- Training artifacts are saved periodically
 
 ## Resource Constraints
 

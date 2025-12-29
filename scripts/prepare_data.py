@@ -15,7 +15,7 @@ def find_text_files(directory):
     text_files.sort()
     return text_files
 
-def main(cleaned_dir, processed_dir):
+def run_preparation(cleaned_dir, processed_dir):
     """
     Concatenates all cleaned text files into a single training corpus.
     """
@@ -67,4 +67,4 @@ if __name__ == "__main__":
         help="The directory where the final training corpus will be saved."
     )
     args = parser.parse_args()
-    main(args.cleaned_dir, args.processed_dir)
+    run_preparation(args.cleaned_dir, args.processed_dir)
