@@ -134,3 +134,4 @@ cython_debug/
 # Ignore generated data that is not meant to be versioned.
 /dataset/processed/*
 /dataset/rejected/*
+/training/checkpoints/*

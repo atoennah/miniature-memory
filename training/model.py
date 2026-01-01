@@ -18,43 +18,41 @@ class GPTConfig:
     n_embd: int = 384
     dropout: float = 0.2
 
-class Head(nn.Module):
-    """One head of self-attention"""
-
-    def __init__(self, config: GPTConfig, head_size: int):
-        super().__init__()
-        self.key = nn.Linear(config.n_embd, head_size, bias=False)
-        self.query = nn.Linear(config.n_embd, head_size, bias=False)
-        self.value = nn.Linear(config.n_embd, head_size, bias=False)
-        self.register_buffer('tril', torch.tril(torch.ones(config.block_size, config.block_size)))
-        self.dropout = nn.Dropout(config.dropout)
-
-    def forward(self, x):
-        B, T, C = x.shape
-        k = self.key(x)
-        q = self.query(x)
-        wei = q @ k.transpose(-2, -1) * C**-0.5
-        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
-        wei = F.softmax(wei, dim=-1)
-        wei = self.dropout(wei)
-        v = self.value(x)
-        out = wei @ v
-        return out
-
 class MultiHeadAttention(nn.Module):
     """Multiple heads of self-attention in parallel"""
 
     def __init__(self, config: GPTConfig):
         super().__init__()
-        head_size = config.n_embd // config.n_head
-        self.heads = nn.ModuleList([Head(config, head_size) for _ in range(config.n_head)])
-        self.proj = nn.Linear(config.n_embd, config.n_embd)
-        self.dropout = nn.Dropout(config.dropout)
+        self.n_head = config.n_head
+        self.n_embd = config.n_embd
+        self.dropout = config.dropout
+
+        # Key, query, value projections for all heads, but in a batch
+        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=False)
+        # Output projection
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd)
+        # Special scaling for residual connections, per NanoGPT
+        self.c_proj.NANOGPT_SCALE_INIT = 1
+        # Regularization
+        self.resid_dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
-        out = torch.cat([h(x) for h in self.heads], dim=-1)
-        out = self.dropout(self.proj(out))
-        return out
+        B, T, C = x.shape # batch size, sequence length, embedding dimensionality (n_embd)
+
+        # Calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+
+        # Causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        # Flash attention is implemented in PyTorch 2.0
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout, is_causal=True)
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+
+        # Output projection
+        y = self.resid_dropout(self.c_proj(y))
+        return y
 
 class FeedForward(nn.Module):
     """A simple linear layer followed by a non-linearity"""
