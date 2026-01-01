@@ -37,116 +37,73 @@ class GPTConfig:
     n_embd: int = 384
     dropout: float = 0.2
 
-class Head(nn.Module):
-    # [INJECTOR: THE LOGOS OF SELF-ATTENTION]
-    #
-    # This module implements a single head of Scaled Dot-Product Attention, the fundamental
-    # building block of a Transformer. Its purpose is to allow tokens in a sequence to
-    # communicate with each other, weighing their importance.
-    #
-    # The core formula is: Attention(Q, K, V) = softmax( (Q @ K.T) / sqrt(d_k) ) @ V
-    #
-    # Q (Query): What I am looking for. A projection of the current token's embedding.
-    # K (Key):   What I contain. A projection of another token's embedding.
-    # V (Value): What I will give you. A projection of another token's embedding.
-    #
-    # The dot product (Q @ K.T) measures the similarity or "affinity" between the Query
-    # of one token and the Key of another. A high dot product means the tokens are highly relevant.
-    """One head of self-attention"""
-
-    def __init__(self, config: GPTConfig, head_size: int):
-        super().__init__()
-        # Linear projections for Query, Key, and Value.
-        # These learnable weights transform the input embedding (n_embd) into the attention space (head_size).
-        self.key = nn.Linear(config.n_embd, head_size, bias=False)
-        self.query = nn.Linear(config.n_embd, head_size, bias=False)
-        self.value = nn.Linear(config.n_embd, head_size, bias=False)
-
-        # [INJECTOR NOTE: THE CAUSAL MASK]
-        # The 'tril' buffer is not a learnable parameter. It's a lower-triangular matrix of ones.
-        # Its purpose is to enforce causality in the self-attention mechanism. In an autoregressive
-        # model, a token at position `i` should only attend to tokens at positions `j <= i`.
-        # By masking out the upper triangle of the affinity matrix with -infinity before the softmax,
-        # we ensure that future tokens have zero influence on the current token's output.
-        self.register_buffer('tril', torch.tril(torch.ones(config.block_size, config.block_size)))
-        self.dropout = nn.Dropout(config.dropout)
-
-    def forward(self, x):
-        B, T, C = x.shape # Batch, Time (sequence length), Channels (embedding dimension)
-
-        # 1. Project input into Query, Key, and Value spaces.
-        k = self.key(x)   # (B, T, head_size)
-        q = self.query(x) # (B, T, head_size)
-
-        # 2. Compute attention scores ("affinities").
-        #    q @ k.T results in a (B, T, T) matrix where wei[b, i, j] is the affinity
-        #    between the i-th token's query and the j-th token's key in the b-th batch.
-        #
-        # [INJECTOR NOTE: THE SCALING FACTOR]
-        # We scale by C**-0.5, which is 1/sqrt(d_k) where d_k is the head dimension.
-        # Why? As the embedding dimension C grows, the variance of the dot product Q @ K.T
-        # also grows. Large dot products push the softmax function into regions where its
-        # gradients are vanishingly small, making learning unstable. The scaling factor
-        # counteracts this by normalizing the variance, ensuring stable gradients.
-        # See paper "Attention Is All You Need" (Vaswani et al., 2017), Section 3.2.1.
-        wei = q @ k.transpose(-2, -1) * C**-0.5 # (B, T, T)
-
-        # 3. Apply the causal mask.
-        #    Replace all values in the upper triangle (where the model would be "looking ahead")
-        #    with negative infinity. The softmax will turn these into zeros.
-        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, T, T)
-
-        # 4. Normalize scores into a probability distribution (weights).
-        wei = F.softmax(wei, dim=-1) # (B, T, T)
-        wei = self.dropout(wei)
-
-        # 5. Compute the weighted sum of Values.
-        #    Each output token embedding is a sum of all previous value vectors,
-        #    weighted by their attention scores.
-        v = self.value(x) # (B, T, head_size)
-        out = wei @ v     # (B, T, head_size)
-
-        return out
-
 class MultiHeadAttention(nn.Module):
-    # [INJECTOR: THE "PARALLEL REALITIES" OF MULTI-HEAD ATTENTION]
+    # [INJECTOR: MERGED IMPLEMENTATION - ATTENTION LOGOS & PARALLEL REALITIES]
     #
-    # While a single attention head can learn one type of relationship between tokens (e.g.,
-    # focusing on the preceding verb), it's beneficial for the model to learn several
-    # different types of relationships simultaneously.
+    # This module combines the logic of single-head attention and multi-head attention
+    # into a single, optimized implementation that leverages PyTorch's fused kernels.
     #
-    # Multi-Head Attention achieves this by running multiple `Head` modules in parallel.
-    # Each head operates on a smaller subspace of the embedding dimension (`head_size`).
-    # For example, if `n_embd` is 384 and `n_head` is 6, each head will process a `head_size` of 64.
+    # --- The Logos of Self-Attention ---
+    # The core formula remains: Attention(Q, K, V) = softmax( (Q @ K.T) / sqrt(d_k) ) @ V
+    # Q (Query): What I am looking for.
+    # K (Key):   What I contain.
+    # V (Value): What I will give you.
     #
-    # This is analogous to having multiple experts look at the same sentence:
-    # - Head 1 might learn to track syntactic dependencies.
-    # - Head 2 might learn to identify co-reference (which pronouns refer to which nouns).
-    # - Head 3 might learn to capture semantic similarity.
+    # --- The "Parallel Realities" of Multi-Head Attention ---
+    # Instead of iterating through separate `Head` modules, we perform the projections for
+    # all heads simultaneously using a single `c_attn` linear layer. This is highly efficient.
+    # The output of this layer (3 * n_embd) is then split and reshaped to create the Q, K, V
+    # tensors for all heads at once.
     #
-    # By concatenating the outputs of these parallel heads, we create a rich representation
-    # that captures a diverse set of relationships. The final linear projection (`proj`)
-    # learns to integrate these parallel realities back into a single, coherent embedding.
+    # --- Fused Kernel Optimization ---
+    # The entire sequence of scaling, masking, softmax, and value-weighting is performed
+    # in a single call to `torch.nn.functional.scaled_dot_product_attention`. This function
+    # is highly optimized to use hardware-specific kernels like FlashAttention when available.
+    # The `is_causal=True` argument replaces the manual lower-triangular mask (`tril`),
+    # ensuring that the model remains autoregressive.
     """Multiple heads of self-attention in parallel"""
 
     def __init__(self, config: GPTConfig):
         super().__init__()
-        head_size = config.n_embd // config.n_head
-        self.heads = nn.ModuleList([Head(config, head_size) for _ in range(config.n_head)])
-        self.proj = nn.Linear(config.n_embd, config.n_embd) # Projection back to the residual pathway
+        self.n_head = config.n_head
+        self.n_embd = config.n_embd
+        self.dropout = config.dropout
+
+        # A single linear layer projects the input into Q, K, and V for all heads at once.
+        # This is more efficient than creating separate linear layers for each head.
+        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=False)
+        # A final projection layer to combine the outputs of all heads.
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd)
         self.dropout = nn.Dropout(config.dropout)
 
-    def forward(self, x):
-        # 1. Run each attention head in parallel.
-        #    h(x) for h in self.heads results in a list of tensors, each of shape (B, T, head_size).
-        # 2. Concatenate the outputs along the channel dimension.
-        #    This combines the "perspectives" of all heads into a single tensor of shape (B, T, n_embd).
-        out = torch.cat([h(x) for h in self.heads], dim=-1)
 
-        # 3. Project the concatenated outputs back into the main embedding space.
-        #    This allows the network to learn how to best combine the information from the different heads.
-        out = self.dropout(self.proj(out))
-        return out
+    def forward(self, x):
+        B, T, C = x.shape # Batch size, Sequence length, Embedding dimensionality (n_embd)
+
+        # 1. Project to Q, K, V for all heads in batch.
+        q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
+
+        # 2. Reshape and transpose Q, K, V to prepare for multi-head attention.
+        #    The shape changes from (B, T, C) to (B, n_head, T, head_size).
+        #    This brings the head dimension forward, allowing each head to perform attention independently.
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+
+        # 3. Perform scaled dot-product attention using the fused kernel.
+        #    - `is_causal=True` handles the causal masking automatically.
+        #    - Dropout is applied internally if the model is in training mode.
+        #    - The scaling by 1/sqrt(head_size) is also handled internally.
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+
+        # 4. Re-assemble all head outputs side-by-side.
+        #    The transpose and contiguous().view() operations reverse the reshaping from step 2,
+        #    concatenating the head outputs to get a final shape of (B, T, C).
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
+
+        # 5. Apply the final output projection.
+        y = self.dropout(self.c_proj(y))
+        return y
 
 class FeedForward(nn.Module):
     """A simple linear layer followed by a non-linearity"""
