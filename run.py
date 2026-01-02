@@ -3,11 +3,6 @@ import sys
 import yaml
 from importlib.metadata import PackageNotFoundError, version
 
-from scripts.validate_raw import run_validation
-from scripts.clean_dataset import run_cleaning
-from scripts.prepare_data import run_preparation
-from training.train import run_training
-
 def check_dependencies():
     """Checks if all the required packages are installed."""
     with open('requirements.txt', 'r') as f:
@@ -65,21 +60,29 @@ def main():
     print("Starting the miniature-memory pipeline...\n")
 
     if not args.skip_validation:
+        # Defer import to improve startup speed when skipping pipeline stages.
+        from scripts.validate_raw import run_validation
         print("--- Running Validation ---")
         run_validation("dataset/raw")
         print("--- Validation completed successfully ---\n")
 
     if not args.skip_cleaning:
+        # Defer import to improve startup speed when skipping pipeline stages.
+        from scripts.clean_dataset import run_cleaning
         print("--- Running Cleaning ---")
         run_cleaning("dataset/raw", "dataset/cleaned")
         print("--- Cleaning completed successfully ---\n")
 
     if not args.skip_preparation:
+        # Defer import to improve startup speed when skipping pipeline stages.
+        from scripts.prepare_data import run_preparation
         print("--- Running Preparation ---")
         run_preparation("dataset/cleaned", "dataset/processed")
         print("--- Preparation completed successfully ---\n")
 
     if not args.skip_training:
+        # Defer import to improve startup speed when skipping pipeline stages.
+        from training.train import run_training
         print("--- Running Training ---")
         with open(args.config, 'r') as f:
             config = yaml.safe_load(f)
