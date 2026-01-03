@@ -1,4 +1,5 @@
 import os
+import time
 import torch
 import argparse
 import yaml
@@ -60,6 +61,7 @@ def run_training(config):
     )
 
     print("\nStarting training...")
+    t0 = time.time()
     for step in range(config['training']['max_steps']):
         # Get a batch of data
         xb, yb = get_batch(
@@ -78,7 +80,14 @@ def run_training(config):
         if step % config['training']['eval_interval'] == 0:
             print(f"Step {step:4d}/{config['training']['max_steps']}: Loss: {loss.item():.4f}")
 
-    print("Training finished.")
+    t1 = time.time()
+    elapsed_time = t1 - t0
+
+    total_tokens = config['training']['max_steps'] * config['training']['batch_size'] * gpt_config.block_size
+    tokens_per_second = total_tokens / elapsed_time
+
+    print(f"Training finished in {elapsed_time:.2f} seconds.")
+    print(f"Tokens per second: {tokens_per_second:.2f}")
 
     # --- Save Checkpoint ---
     checkpoint_path = os.path.join(config['training']['output_dir'], 'model.pt')
