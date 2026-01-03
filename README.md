@@ -1,179 +1,40 @@
 # miniature-memory
 
-A minimal, memory-aware dataset and training pipeline for small GPT-style models
+A minimal, memory-aware dataset and training pipeline for small GPT-style models, designed for low-RAM (~2GB) environments.
 
-miniature-memory is a project focused on building, growing, and training a small text-based language model using a NanoGPT-from-scratch approach, optimized for tight resource constraints (e.g. Google Colab, ~2GB RAM environments).
+This project provides a complete, from-scratch pipeline to:
 
-The core of this project is the dataset pipeline: scraping, extracting, storing, cleaning, preparing, and incrementally training on text data in a fully automated way.
+-   Scrape and process text data from the web.
+-   Build a growing, version-controlled dataset.
+-   Train a small-scale, NanoGPT-style language model.
+-   Run and resume training under tight resource constraints.
 
-## What This Project Does
+The core philosophy is **constraint-first development**: every architectural choice is optimized for simplicity, reproducibility, and minimal resource usage.
 
-- Scrapes text content from the web using Google Search as an entry point
-- Extracts readable text using browser-style “read mode”
-- Stores raw text as an ever-growing dataset
-- Cleans and prepares data for training
-- Trains a small GPT-style model incrementally
-- Saves checkpoints and artifacts so training can resume anytime
-- Designed to run on Linux and Google Colab
+## Key Documents
 
-This project is not a large-model framework.
-It is intentionally small, explicit, and constrained.
+-   **[Developer Guide](DEVELOPER_GUIDE.md):** Detailed technical documentation, setup instructions, and pipeline overview. **Start here if you are a contributor.**
+-   **[Roadmap](ROADMAP.md):** The long-term development plan and project vision.
+-   **[Data Format](DATA_FORMAT.md):** The specification for training data and control tokens.
 
-## Target Model
+## Quick Start
 
-- **Architecture:** GPT-style decoder-only transformer
-- **Base implementation:** NanoGPT-style (from scratch)
-- **Scale:** very small models
-- **Training:** incremental, resumable
-- **Environment:** CPU / small GPU
+1.  **Setup the environment:**
+    ```bash
+    ./setup.sh
+    ```
 
-The goal is to push NanoGPT as far as possible under minimal resources.
+2.  **Run the full pipeline (data processing and training):**
+    ```bash
+    python3 run.py
+    ```
 
-## Repository Structure
+For detailed instructions on workflow, configuration, and dataset design, please read the [Developer Guide](DEVELOPER_GUIDE.md).
 
-```
-.
-├── dataset/
-│   ├── raw/          # raw extracted text (one file per content)
-│   ├── cleaned/      # cleaned text (derived)
-│   └── processed/    # tokenized / training-ready data
-│
-├── scraper/
-│   ├── search/       # Google search helpers
-│   ├── fetch/        # URL fetching & rendering
-│   └── extract/      # read-mode text extraction
-│
-├── scripts/
-│   ├── validate_raw.py
-│   ├── clean_dataset.py
-│   ├── prepare_data.py
-│   └── stats.py
-│
-├── training/
-│   ├── model.py
-│   ├── train.py
-│   └── configs/
-│
-├── run.py
-├── setup.sh
-├── NanoGPT_Training.ipynb
-└── README.md
-```
+## Project Goals
 
-## Setup
+-   To build a fully transparent, "no black boxes" training pipeline.
+-   To explore the limits of small language models under severe hardware constraints.
+-   To create a stable, reproducible framework for incremental dataset growth and model training.
 
-To set up the environment, run the `setup.sh` script:
-```bash
-./setup.sh
-```
-This will install all the necessary dependencies.
-
-## Training Workflow
-
-The entire data processing and training pipeline can be run using the unified `run.py` script.
-
-### Local / Linux
-
-To run the entire pipeline, simply execute:
-```bash
-python run.py
-```
-
-You can also skip specific steps using command-line flags:
-```bash
-# Skip validation and cleaning
-python run.py --skip-validation --skip-cleaning
-
-# Run only the training step
-python run.py --skip-validation --skip-cleaning --skip-preparation
-```
-
-### Google Colab
-
-- Open `NanoGPT_Training.ipynb`
-- Upload or clone repository
-- Run all cells top to bottom
-- Training artifacts are saved periodically
-
-## Dataset Design
-
-### Raw Dataset
-
-- Raw data is plain text only
-- One file = one content item
-- Stored exactly as extracted
-- Never edited after being written
-
-Example:
-`dataset/raw/source_example/20250112_231455__SRC__abc123__9f3a.txt`
-
-Raw data exists only to be consumed by scripts, not humans.
-
-### Cleaned Dataset
-
-- Generated from raw data
-- Removes noise (HTML artifacts, encoding issues)
-- Normalizes whitespace
-- Still text-only
-
-### Processed Dataset
-
-- Tokenized
-- Split into train / validation
-- Ready for model training
-
-All cleaned and processed data can be re-generated from raw data at any time.
-
-## Scraping Pipeline (High Level)
-
-1.  Search using Google
-2.  Collect candidate URLs
-3.  Render page (headless / read-mode)
-4.  Extract readable text
-5.  Save text into `dataset/raw/`
-6.  Log source and timestamp
-
-Scraping is designed to be repeatable and incremental.
-
-## Resource Constraints
-
-Designed to work with:
-
-- ~2GB RAM (minimum target)
-- Limited disk
-- Free-tier Colab environments
-
-Techniques used:
-
-- small vocab
-- small context window
-- small batch sizes
-- checkpoint-based training
-
-## Incremental Growth
-
-- New raw data can be added at any time
-- Cleaning and preparation re-run deterministically
-- Training resumes from latest checkpoint
-- Dataset grows continuously without restarting from zero
-
-## Current Status
-
-- Dataset pipeline: in progress
-- Scraping automation: active development
-- Training loop: functional
-- Colab support: draft / usable
-
-See `ROADMAP.md` for what’s next.
-
-## Summary
-
-miniature-memory is about doing more with less:
-
-- small model
-- small machine
-- growing dataset
-- full control over every step
-
-No black boxes, no magic, no assumptions.
-
+This is not a large-model framework. It is an experiment in doing more with less.
