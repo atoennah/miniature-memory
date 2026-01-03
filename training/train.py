@@ -2,89 +2,165 @@ import os
 import torch
 import argparse
 import yaml
+from typing import Dict, Any, Tuple, List, Callable
+
 from .model import GPT, GPTConfig
 
+
 # --- Data Loading and Tokenization ---
-def get_data(data_path):
-    """Reads the training data and creates a simple char-level tokenizer."""
+
+def get_data(data_path: str) -> Tuple[torch.Tensor, int, Callable[[str], List[int]], Callable[[List[int]], str]]:
+    """
+    Reads the training data, creates a simple char-level tokenizer, and returns
+    the encoded data and tokenizer functions.
+
+    Args:
+        data_path (str): The path to the training data file.
+
+    Returns:
+        Tuple[torch.Tensor, int, Callable[[str], List[int]], Callable[[List[int]], str]]:
+            A tuple containing:
+            - The encoded training data as a PyTorch tensor.
+            - The vocabulary size.
+            - The 'encode' function for tokenizing strings.
+            - The 'decode' function for de-tokenizing lists of integers.
+    """
     with open(data_path, 'r', encoding='utf-8') as f:
         text = f.read()
 
     chars = sorted(list(set(text)))
     vocab_size = len(chars)
 
+    # Simple character-level tokenizer
     stoi = {ch: i for i, ch in enumerate(chars)}
     itos = {i: ch for i, ch in enumerate(chars)}
-
     encode = lambda s: [stoi[c] for c in s]
     decode = lambda l: ''.join([itos[i] for i in l])
 
     data = torch.tensor(encode(text), dtype=torch.long)
     return data, vocab_size, encode, decode
 
-def get_batch(data, block_size, batch_size, device):
-    """Generates a small batch of data of inputs x and targets y."""
+
+def get_batch(data: torch.Tensor, block_size: int, batch_size: int, device: str) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Generates a small batch of data of inputs x and targets y.
+
+    Args:
+        data (torch.Tensor): The full training data.
+        block_size (int): The context length for predictions.
+        batch_size (int): The number of independent sequences to process in parallel.
+        device (str): The device to move the tensors to ('cpu' or 'cuda').
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor]: A tuple containing the input and target tensors.
+    """
+    # Generate random starting indices for the batches
     ix = torch.randint(len(data) - block_size, (batch_size,))
+    # Stack the input sequences into a batch
     x = torch.stack([data[i:i+block_size] for i in ix])
+    # Stack the target sequences (shifted by one) into a batch
     y = torch.stack([data[i+1:i+block_size+1] for i in ix])
     x, y = x.to(device), y.to(device)
     return x, y
 
-# --- Main Training Loop ---
-def run_training(config):
-    # --- Setup ---
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"Using device: {device}")
 
-    # Create output directory
-    os.makedirs(config['training']['output_dir'], exist_ok=True)
+# --- Trainer Class ---
 
-    # --- Data ---
-    data, vocab_size, _, _ = get_data(config['data']['path'])
+class Trainer:
+    """
+    The Trainer class encapsulates the logic for training a GPT model.
 
-    # --- Model ---
-    gpt_config = GPTConfig(
-        vocab_size=vocab_size,
-        block_size=config['model']['block_size'],
-        n_layer=config['model']['n_layer'],
-        n_head=config['model']['n_head'],
-        n_embd=config['model']['n_embd'],
-        dropout=config['model']['dropout']
-    )
-    model = GPT(gpt_config).to(device)
+    This class handles the initialization of the model, data loading, the main
+    training loop, and checkpointing. By encapsulating the training process,
+    it provides a clean and reusable interface for running training sessions.
+    """
+    def __init__(self, config: Dict[str, Any]):
+        """
+        Initializes the Trainer with a given configuration.
 
-    # --- Training ---
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=float(config['training']['learning_rate']) # Explicitly cast to float
-    )
+        Args:
+            config (Dict[str, Any]): A dictionary containing the model, training,
+                                      and data configuration.
+        """
+        self.config = config
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        print(f"Using device: {self.device}")
 
-    print("\nStarting training...")
-    for step in range(config['training']['max_steps']):
-        # Get a batch of data
-        xb, yb = get_batch(
-            data,
-            gpt_config.block_size,
-            config['training']['batch_size'],
-            device
+        # Ensure the output directory for checkpoints exists
+        os.makedirs(self.config['training']['output_dir'], exist_ok=True)
+
+        # Load data and tokenizer
+        self.data, self.vocab_size, _, _ = get_data(self.config['data']['path'])
+
+        # Initialize the GPT model
+        self.model = self._init_model()
+
+        # Initialize the AdamW optimizer
+        self.optimizer = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=float(self.config['training']['learning_rate'])
         )
 
-        # Evaluate the loss
-        logits, loss = model(xb, yb)
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        optimizer.step()
+    def _init_model(self) -> GPT:
+        """
+        Initializes the GPT model based on the configuration.
 
-        if step % config['training']['eval_interval'] == 0:
-            print(f"Step {step:4d}/{config['training']['max_steps']}: Loss: {loss.item():.4f}")
+        Returns:
+            GPT: The initialized GPT model.
+        """
+        gpt_config = GPTConfig(
+            vocab_size=self.vocab_size,
+            block_size=self.config['model']['block_size'],
+            n_layer=self.config['model']['n_layer'],
+            n_head=self.config['model']['n_head'],
+            n_embd=self.config['model']['n_embd'],
+            dropout=self.config['model']['dropout']
+        )
+        return GPT(gpt_config).to(self.device)
 
-    print("Training finished.")
+    def train(self) -> None:
+        """
+        Runs the main training loop for the specified number of steps.
 
-    # --- Save Checkpoint ---
-    checkpoint_path = os.path.join(config['training']['output_dir'], 'model.pt')
-    torch.save(model.state_dict(), checkpoint_path)
-    print(f"\nModel checkpoint saved to: {checkpoint_path}")
+        This method iterates through the training data, performs forward and
+        backward passes, and updates the model parameters. It also logs the
+        training loss at specified intervals.
+        """
+        print("\nStarting training...")
+        for step in range(self.config['training']['max_steps']):
+            # Get a batch of data
+            xb, yb = get_batch(
+                self.data,
+                self.model.config.block_size,
+                self.config['training']['batch_size'],
+                self.device
+            )
 
+            # Perform a forward and backward pass
+            logits, loss = self.model(xb, yb)
+            self.optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            self.optimizer.step()
+
+            # Log the training loss
+            if step % self.config['training']['eval_interval'] == 0:
+                print(f"Step {step:4d}/{self.config['training']['max_steps']}: Loss: {loss.item():.4f}")
+
+        print("Training finished.")
+
+    def save_checkpoint(self) -> None:
+        """
+        Saves the model's state dictionary to a checkpoint file.
+
+        The checkpoint is saved in the output directory specified in the
+        training configuration.
+        """
+        checkpoint_path = os.path.join(self.config['training']['output_dir'], 'model.pt')
+        torch.save(self.model.state_dict(), checkpoint_path)
+        print(f"\nModel checkpoint saved to: {checkpoint_path}")
+
+
+# --- Main Execution Block ---
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Train a NanoGPT model.")
@@ -96,13 +172,19 @@ if __name__ == '__main__':
     )
     args = parser.parse_args()
 
+    # Load the configuration file
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
 
-    # Add some hardcoded values not in the yaml for this simple loop
+    # --- Configuration Overrides (for this simple script) ---
+    # In a more robust setup, these would be handled by a proper config system
+    # or command-line arguments.
     config.setdefault('training', {})['max_steps'] = 100
     config.setdefault('training', {})['eval_interval'] = 10
     config.setdefault('training', {})['output_dir'] = 'training/checkpoints'
     config.setdefault('data', {})['path'] = 'dataset/processed/train.txt'
 
-    run_training(config)
+    # --- Run the Training ---
+    trainer = Trainer(config)
+    trainer.train()
+    trainer.save_checkpoint()
