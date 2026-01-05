@@ -6,7 +6,7 @@ from importlib.metadata import PackageNotFoundError, version
 from scripts.validate_raw import run_validation
 from scripts.clean_dataset import run_cleaning
 from scripts.prepare_data import run_preparation
-from training.train import run_training
+from training.train import main as run_training
 
 def check_dependencies():
     """Checks if all the required packages are installed."""
@@ -83,6 +83,13 @@ def main():
         print("--- Running Training ---")
         with open(args.config, 'r') as f:
             config = yaml.safe_load(f)
+
+        # Re-apply the hardcoded values from the original train.py for consistency
+        config.setdefault('training', {})['max_steps'] = 100
+        config.setdefault('training', {})['eval_interval'] = 10
+        config.setdefault('training', {})['output_dir'] = 'training/checkpoints'
+        config.setdefault('data', {})['path'] = 'dataset/processed/train.txt'
+        config.setdefault('model', {})['block_size'] = 256
 
         run_training(config)
         print("--- Training completed successfully ---\n")
