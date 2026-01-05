@@ -1,0 +1,29 @@
+# NanoGPT-Lite Configuration (Small - Optimized)
+
+model:
+  n_embd: 256
+  n_head: 4
+  n_layer: 7
+  block_size: 256
+  dropout: 0.2
+
+tokenizer:
+  type: character-level
+
+training:
+  batch_size: 16
+  learning_rate: 5e-5
+  betas: [0.9, 0.95]
+  epochs: 1
+  output_dir: 'training/checkpoints'
+  max_steps: 100
+  eval_interval: 10
+
+data:
+    path: 'dataset/processed/train.txt'
+
+inference:
+  precision: FP16
+  temperature: 0.8
+  top_p: 0.9
+  repetition_penalty: 1.1
