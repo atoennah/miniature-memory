@@ -19,6 +19,10 @@ The core of this project is the dataset pipeline: scraping, extracting, storing,
 This project is not a large-model framework.
 It is intentionally small, explicit, and constrained.
 
+## Developer Documentation
+
+This README provides a high-level overview. For a detailed technical explanation of the data pipeline, training process, and project philosophy, please see the **[Developer Guide](DEVELOPER_GUIDE.md)**.
+
 ## Target Model
 
 - **Architecture:** GPT-style decoder-only transformer
