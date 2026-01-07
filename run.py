@@ -6,7 +6,7 @@ from importlib.metadata import PackageNotFoundError, version
 from scripts.validate_raw import run_validation
 from scripts.clean_dataset import run_cleaning
 from scripts.prepare_data import run_preparation
-from training.train import run_training
+from training.train import main as run_training
 
 def check_dependencies():
     """Checks if all the required packages are installed."""
