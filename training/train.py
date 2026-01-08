@@ -1,50 +1,40 @@
-import os
-import torch
+"""
+Main script to run the GPT model training process.
+
+This script acts as the orchestrator, bringing together the data manager,
+model, and trainer to execute the training loop based on a provided
+configuration file.
+"""
 import argparse
 import yaml
+import torch
+
+from .data_loader import DataManager
 from .model import GPT, GPTConfig
+from .trainer import Trainer
 
-# --- Data Loading and Tokenization ---
-def get_data(data_path):
-    """Reads the training data and creates a simple char-level tokenizer."""
-    with open(data_path, 'r', encoding='utf-8') as f:
-        text = f.read()
+def run_training(config: dict):
+    """
+    Orchestrates the training process from configuration.
 
-    chars = sorted(list(set(text)))
-    vocab_size = len(chars)
-
-    stoi = {ch: i for i, ch in enumerate(chars)}
-    itos = {i: ch for i, ch in enumerate(chars)}
-
-    encode = lambda s: [stoi[c] for c in s]
-    decode = lambda l: ''.join([itos[i] for i in l])
-
-    data = torch.tensor(encode(text), dtype=torch.long)
-    return data, vocab_size, encode, decode
-
-def get_batch(data, block_size, batch_size, device):
-    """Generates a small batch of data of inputs x and targets y."""
-    ix = torch.randint(len(data) - block_size, (batch_size,))
-    x = torch.stack([data[i:i+block_size] for i in ix])
-    y = torch.stack([data[i+1:i+block_size+1] for i in ix])
-    x, y = x.to(device), y.to(device)
-    return x, y
-
-# --- Main Training Loop ---
-def run_training(config):
+    Args:
+        config (dict): A dictionary containing the training configuration.
+    """
     # --- Setup ---
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
 
-    # Create output directory
-    os.makedirs(config['training']['output_dir'], exist_ok=True)
-
-    # --- Data ---
-    data, vocab_size, _, _ = get_data(config['data']['path'])
+    # --- Data Manager ---
+    data_manager = DataManager(
+        data_path=config['data']['path'],
+        block_size=config['model']['block_size'],
+        batch_size=config['training']['batch_size'],
+        device=device
+    )
 
     # --- Model ---
     gpt_config = GPTConfig(
-        vocab_size=vocab_size,
+        vocab_size=data_manager.vocab_size,
         block_size=config['model']['block_size'],
         n_layer=config['model']['n_layer'],
         n_head=config['model']['n_head'],
@@ -53,37 +43,15 @@ def run_training(config):
     )
     model = GPT(gpt_config).to(device)
 
-    # --- Training ---
+    # --- Optimizer ---
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=float(config['training']['learning_rate']) # Explicitly cast to float
+        lr=float(config['training']['learning_rate'])
     )
 
-    print("\nStarting training...")
-    for step in range(config['training']['max_steps']):
-        # Get a batch of data
-        xb, yb = get_batch(
-            data,
-            gpt_config.block_size,
-            config['training']['batch_size'],
-            device
-        )
-
-        # Evaluate the loss
-        logits, loss = model(xb, yb)
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        optimizer.step()
-
-        if step % config['training']['eval_interval'] == 0:
-            print(f"Step {step:4d}/{config['training']['max_steps']}: Loss: {loss.item():.4f}")
-
-    print("Training finished.")
-
-    # --- Save Checkpoint ---
-    checkpoint_path = os.path.join(config['training']['output_dir'], 'model.pt')
-    torch.save(model.state_dict(), checkpoint_path)
-    print(f"\nModel checkpoint saved to: {checkpoint_path}")
+    # --- Trainer ---
+    trainer = Trainer(config, model, optimizer, data_manager)
+    trainer.train()
 
 
 if __name__ == '__main__':
@@ -99,10 +67,14 @@ if __name__ == '__main__':
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
 
-    # Add some hardcoded values not in the yaml for this simple loop
-    config.setdefault('training', {})['max_steps'] = 100
-    config.setdefault('training', {})['eval_interval'] = 10
-    config.setdefault('training', {})['output_dir'] = 'training/checkpoints'
-    config.setdefault('data', {})['path'] = 'dataset/processed/train.txt'
+    # --- Configuration Defaults for Standalone Execution ---
+    # These defaults are applied when running the script directly,
+    # allowing for quick tests without modifying the main run.py orchestrator.
+    config.setdefault('training', {})
+    config['training'].setdefault('max_steps', 100)
+    config['training'].setdefault('eval_interval', 10)
+    config['training'].setdefault('output_dir', 'training/checkpoints')
+    config.setdefault('data', {})
+    config['data'].setdefault('path', 'dataset/processed/train.txt')
 
     run_training(config)
