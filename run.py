@@ -3,10 +3,6 @@ import sys
 import yaml
 from importlib.metadata import PackageNotFoundError, version
 
-from scripts.validate_raw import run_validation
-from scripts.clean_dataset import run_cleaning
-from scripts.prepare_data import run_preparation
-from training.train import run_training
 
 def check_dependencies():
     """Checks if all the required packages are installed."""
@@ -29,6 +25,7 @@ def check_dependencies():
         sys.exit(1)
 
 def main():
+    # Deferring imports into conditional blocks to improve script startup time.
     check_dependencies()
 
     parser = argparse.ArgumentParser(
@@ -66,21 +63,25 @@ def main():
 
     if not args.skip_validation:
         print("--- Running Validation ---")
+        from scripts.validate_raw import run_validation
         run_validation("dataset/raw")
         print("--- Validation completed successfully ---\n")
 
     if not args.skip_cleaning:
         print("--- Running Cleaning ---")
+        from scripts.clean_dataset import run_cleaning
         run_cleaning("dataset/raw", "dataset/cleaned")
         print("--- Cleaning completed successfully ---\n")
 
     if not args.skip_preparation:
         print("--- Running Preparation ---")
+        from scripts.prepare_data import run_preparation
         run_preparation("dataset/cleaned", "dataset/processed")
         print("--- Preparation completed successfully ---\n")
 
     if not args.skip_training:
         print("--- Running Training ---")
+        from training.train import run_training
         with open(args.config, 'r') as f:
             config = yaml.safe_load(f)
 
