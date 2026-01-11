@@ -1,5 +1,7 @@
 import argparse
 import sys
+from importlib.metadata import PackageNotFoundError, version
+
 import yaml
 
 
@@ -147,6 +149,7 @@ def main():
                 _handle_import_error("training.train")
 
         print("--- Running Training ---")
+        import yaml
         from training.train import run_training
         with open(args.config, 'r') as f:
             config = yaml.safe_load(f)
