@@ -49,6 +49,7 @@ def _handle_import_error(module_name):
     sys.exit(1)
 
 def main():
+    # Deferring imports into conditional blocks to improve script startup time.
     """
     Main function to run the miniature-memory data and training pipeline.
 
@@ -145,6 +146,9 @@ def main():
                 _handle_import_error("training.train")
 
         print("--- Running Training ---")
+        from training.train import run_training
+        with open(args.config, 'r') as f:
+            config = yaml.safe_load(f)
         import yaml
         from training.train import run_training
 
