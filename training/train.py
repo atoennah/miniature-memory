@@ -1,9 +1,11 @@
-import os
-import torch
 import argparse
+import torch
 import yaml
 from .model import GPT, GPTConfig
 from typing import Dict, Any, Tuple, List
+from typing import Dict, Any
+import time
+from model import GPT, GPTConfig
 
 # --- Data Loading and Tokenization ---
 def get_data(data_path: str) -> Tuple[torch.Tensor, int, Any, Any]:
@@ -25,14 +27,8 @@ def get_data(data_path: str) -> Tuple[torch.Tensor, int, Any, Any]:
     chars = sorted(list(set(text)))
     vocab_size = len(chars)
 
-    stoi = {ch: i for i, ch in enumerate(chars)}
-    itos = {i: ch for i, ch in enumerate(chars)}
-
-    encode = lambda s: [stoi[c] for c in s]
-    decode = lambda l: ''.join([itos[i] for i in l])
-
-    data = torch.tensor(encode(text), dtype=torch.long)
-    return data, vocab_size, encode, decode
+from .data_loader import DataManager
+from .trainer import Trainer
 
 def get_batch(data: torch.Tensor, block_size: int, batch_size: int, device: str) -> Tuple[torch.Tensor, torch.Tensor]:
     """Generates a small batch of data of inputs x and targets y.
@@ -106,6 +102,41 @@ class Trainer:
             self.model.config.block_size,
             self.config['training']['batch_size'],
             self.device
+def main(config: Dict[str, Any]) -> None:
+    """
+    Main function to orchestrate the training pipeline.
+
+    Args:
+        config (Dict[str, Any]): The configuration dictionary.
+    """
+    # Determine the computing device
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    # Initialize the DataManager
+    data_manager = DataManager(
+        data_path=config['data']['path'],
+        block_size=config['model']['block_size'],
+        batch_size=config['training']['batch_size'],
+        device=device
+    )
+
+    # Initialize the Trainer
+    trainer = Trainer(config, data_manager)
+    # --- Training ---
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=float(config['training']['learning_rate']) # Explicitly cast to float
+    )
+
+    print("\nStarting training...")
+    start_time = time.time()
+    for step in range(config['training']['max_steps']):
+        # Get a batch of data
+        xb, yb = get_batch(
+            data,
+            gpt_config.block_size,
+            config['training']['batch_size'],
+            device
         )
 
     def _run_step(self, xb: torch.Tensor, yb: torch.Tensor, step: int) -> None:
@@ -123,12 +154,17 @@ class Trainer:
         checkpoint_path = os.path.join(self.config['training']['output_dir'], 'model.pt')
         torch.save(self.model.state_dict(), checkpoint_path)
         print(f"\nModel checkpoint saved to: {checkpoint_path}")
+    end_time = time.time()
+    duration = end_time - start_time
+    print(f"Training finished in {duration:.2f} seconds.")
 
 def load_config(config_path: str) -> Dict[str, Any]:
     """Loads configuration from a YAML file and applies default values.
 
     Args:
         config_path: The path to the YAML configuration file.
+    # Run the training
+    trainer.run()
 
     Returns:
         A dictionary containing the configuration.
@@ -165,3 +201,15 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+    # --- Configuration Defaults ---
+    # These values are set to ensure that even a minimal config file will run,
+    # especially for standalone execution of this script.
+    config.setdefault('training', {})
+    config['training'].setdefault('max_steps', 100)
+    config['training'].setdefault('eval_interval', 10)
+    config['training'].setdefault('output_dir', 'training/checkpoints')
+
+    config.setdefault('data', {})
+    config['data'].setdefault('path', 'dataset/processed/train.txt')
+
+    main(config)
