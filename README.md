@@ -1,36 +1,40 @@
 # miniature-memory
 
-A minimal, memory-aware dataset and training pipeline for small GPT-style models
+A minimal, memory-aware, and fully automated pipeline for training small, specialized GPT-style language models under significant resource constraints.
 
-miniature-memory is a project focused on building, growing, and training a small text-based language model using a NanoGPT-from-scratch approach, optimized for tight resource constraints (e.g. Google Colab, ~2GB RAM environments).
+## Project Philosophy
 
-The core of this project is the dataset pipeline: scraping, extracting, storing, cleaning, preparing, and incrementally training on text data in a fully automated way.
+`miniature-memory` is an experiment in doing more with less. It is built on a "constraint-first" philosophy, designed to train a coherent language model on a continuously growing dataset with minimal hardware (~2GB RAM).
 
-## What This Project Does
+The project's core is its deterministic, auditable, and fully automated data pipeline, which handles everything from web scraping and text extraction to data cleaning and preparation for training.
 
-- Scrapes text content from the web using Google Search as an entry point
-- Extracts readable text using browser-style “read mode”
-- Stores raw text as an ever-growing dataset
-- Cleans and prepares data for training
-- Trains a small GPT-style model incrementally
-- Saves checkpoints and artifacts so training can resume anytime
-- Designed to run on Linux and Google Colab
+**This project is explicitly and exclusively dedicated to building language models for adult entertainment.** For a full breakdown of this non-negotiable mission, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-This project is not a large-model framework.
-It is intentionally small, explicit, and constrained.
+## Key Features
 
-## Target Model
+-   **Automated Data Pipeline:** From Google Search to a training-ready `train.txt`, the entire data workflow is scripted and reproducible.
+-   **Constraint-First Design:** Optimized for low-RAM, CPU-only, and free-tier environments.
+-   **Incremental Growth:** The dataset is designed to grow continuously without requiring training restarts.
+-   **NanoGPT-from-Scratch:** A minimal, understandable, and hackable implementation of a GPT-style model.
 
-- **Architecture:** GPT-style decoder-only transformer
-- **Base implementation:** NanoGPT-style (from scratch)
-- **Scale:** very small models
-- **Training:** incremental, resumable
-- **Environment:** CPU / small GPU
+## Getting Started
 
-The goal is to push NanoGPT as far as possible under minimal resources.
+For contributors, the **[Developer Guide](DEVELOPER_GUIDE.md)** is the single source of truth. It provides a comprehensive walkthrough of the environment setup, data pipeline, training commands, and contribution workflow.
 
-## Repository Structure
+### Quick Commands
 
+-   **Install dependencies:** `pip install -r requirements.txt`
+-   **Run the full data pipeline:** See the step-by-step commands in the [Developer Guide](DEVELOPER_GUIDE.md#3-the-data-pipeline).
+-   **Start training:** `python3 training/train.py --config training/configs/small.yaml`
+-   **Generate text:** `python3 scripts/generate.py --max_new_tokens 500`
+
+## Project Documentation
+
+-   **[Developer Guide](DEVELOPER_GUIDE.md):** The essential guide for all contributors. **Start here.**
+-   **[CONTRIBUTING.md](CONTRIBUTING.md):** The locked project intent and contribution rules.
+-   **[ROADMAP.md](ROADMAP.md):** The long-term vision and development phases.
+-   **[DATA_FORMAT.md](DATA_FORMAT.md):** Technical specification for the training data format.
+-   **Agent & Memory Files:** The `.jules/` directory contains internal documentation for the AI agents that help maintain this repository.
 ```
 .
 ├── dataset/
@@ -54,9 +58,46 @@ The goal is to push NanoGPT as far as possible under minimal resources.
 │   ├── train.py
 │   └── configs/
 │
+├── run.py
+├── setup.sh
 ├── NanoGPT_Training.ipynb
 └── README.md
 ```
+
+## Setup
+
+To set up the environment, run the `setup.sh` script:
+```bash
+./setup.sh
+```
+This will install all the necessary dependencies.
+
+## Training Workflow
+
+The entire data processing and training pipeline can be run using the unified `run.py` script.
+
+### Local / Linux
+
+To run the entire pipeline, simply execute:
+```bash
+python run.py
+```
+
+You can also skip specific steps using command-line flags:
+```bash
+# Skip validation and cleaning
+python run.py --skip-validation --skip-cleaning
+
+# Run only the training step
+python run.py --skip-validation --skip-cleaning --skip-preparation
+```
+
+### Google Colab
+
+- Open `NanoGPT_Training.ipynb`
+- Upload or clone repository
+- Run all cells top to bottom
+- Training artifacts are saved periodically
 
 ## Dataset Design
 
@@ -97,24 +138,6 @@ All cleaned and processed data can be re-generated from raw data at any time.
 6.  Log source and timestamp
 
 Scraping is designed to be repeatable and incremental.
-
-## Training Workflow
-
-### Local / Linux
-
-```bash
-python scripts/validate_raw.py
-python scripts/clean_dataset.py
-python scripts/prepare_data.py
-python training/train.py --config training/configs/small.yaml
-```
-
-### Google Colab
-
-- Open `NanoGPT_Training.ipynb`
-- Upload or clone repository
-- Run all cells top to bottom
-- Training artifacts are saved periodically
 
 ## Resource Constraints
 
@@ -158,3 +181,4 @@ miniature-memory is about doing more with less:
 
 No black boxes, no magic, no assumptions.
 
+This project is not a general-purpose framework. It is a focused, opinionated, and resource-aware system for building a very specific type of language model.

@@ -37,7 +37,7 @@ def validate_file(filepath):
     except Exception as e:
         return False, f"Error reading file: {e}"
 
-def main(raw_data_dir):
+def run_validation(raw_data_dir):
     """
     Walks through the raw data directory and validates each text file.
     """
@@ -76,4 +76,4 @@ if __name__ == "__main__":
         help="The directory containing the raw text files.",
     )
     args = parser.parse_args()
-    main(args.raw_data_dir)
+    run_validation(args.raw_data_dir)
