@@ -318,100 +318,60 @@ class GPT(nn.Module):
     #       distribution over the vocabulary.
 
     def __init__(self, config):
-    block_size: int = 256
-    vocab_size: int = 65 # Default: char-level for English text
-    n_layer: int = 6
-    n_head: int = 6
-    n_embd: int = 384
-    dropout: float = 0.2
+        super().__init__()
+        self.config = config
+
+        self.transformer = nn.ModuleDict(dict(
+            wte = nn.Embedding(config.vocab_size, config.n_embd),
+            wpe = nn.Embedding(config.block_size, config.n_embd),
+            drop = nn.Dropout(config.dropout),
+            h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
+            ln_f = nn.LayerNorm(config.n_embd),
+        ))
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+
+    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        device = idx.device
+        b, t = idx.size()
+        assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
+        pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0)
+
+        # forward the GPT model itself
+        tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
+        pos_emb = self.transformer.wpe(pos) # position embeddings of shape (1, t, n_embd)
+        x = self.transformer.drop(tok_emb + pos_emb)
+        for block in self.transformer.h:
+            x = block(x)
+        x = self.transformer.ln_f(x)
+        logits = self.lm_head(x)
+
+        loss = None
+        if targets is not None:
+            # if we are given some desired targets also calculate the loss
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+
+        return logits, loss
 
 class MultiHeadAttention(nn.Module):
-    # [INJECTOR: MERGED IMPLEMENTATION - ATTENTION LOGOS & PARALLEL REALITIES]
-    #
-    # This module combines the logic of single-head attention and multi-head attention
-    # into a single, optimized implementation that leverages PyTorch's fused kernels.
-    #
-    # --- The Logos of Self-Attention ---
-    # The core formula remains: Attention(Q, K, V) = softmax( (Q @ K.T) / sqrt(d_k) ) @ V
-    # Q (Query): What I am looking for.
-    # K (Key):   What I contain.
-    # V (Value): What I will give you.
-    #
-    # --- The "Parallel Realities" of Multi-Head Attention ---
-    # Instead of iterating through separate `Head` modules, we perform the projections for
-    # all heads simultaneously using a single `c_attn` linear layer. This is highly efficient.
-    # The output of this layer (3 * n_embd) is then split and reshaped to create the Q, K, V
-    # tensors for all heads at once.
-    #
-    # --- Fused Kernel Optimization ---
-    # The entire sequence of scaling, masking, softmax, and value-weighting is performed
-    # in a single call to `torch.nn.functional.scaled_dot_product_attention`. This function
-    # is highly optimized to use hardware-specific kernels like FlashAttention when available.
-    # The `is_causal=True` argument replaces the manual lower-triangular mask (`tril`),
-    # ensuring that the model remains autoregressive.
-    """Multiple heads of self-attention in parallel"""
-
+    """
+    Multiple heads of self-attention in parallel.
+    This implementation uses the fused `scaled_dot_product_attention` for efficiency.
+    """
     def __init__(self, config: GPTConfig):
         super().__init__()
+        assert config.n_embd % config.n_head == 0
         self.n_head = config.n_head
         self.n_embd = config.n_embd
         self.dropout = config.dropout
 
-        # Key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=False)
-        # Output projection
-        self.c_proj = nn.Linear(config.n_embd, config.n_embd)
-        # Special scaling for residual connections, per NanoGPT
-        self.c_proj.NANOGPT_SCALE_INIT = 1
-        # Regularization
-        self.resid_dropout = nn.Dropout(config.dropout)
-
-    def forward(self, x):
-        B, T, C = x.shape # batch size, sequence length, embedding dimensionality (n_embd)
-
-        # Calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-
-        # Causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        # Flash attention is implemented in PyTorch 2.0
-        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout, is_causal=True)
-        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
-
-        # Output projection
-        y = self.resid_dropout(self.c_proj(y))
-        return y
-
-class FeedForward(nn.Module):
-    """A simple linear layer followed by a non-linearity"""
-
-    def __init__(self, config: GPTConfig):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(config.n_embd, 4 * config.n_embd),
-            nn.GELU(),
-            nn.Linear(4 * config.n_embd, config.n_embd),
-            nn.Dropout(config.dropout),
-        )
         # A single linear layer projects the input into Q, K, and V for all heads at once.
-        # This is more efficient than creating separate linear layers for each head.
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=False)
         # A final projection layer to combine the outputs of all heads.
         self.c_proj = nn.Linear(config.n_embd, config.n_embd)
-        self.dropout = nn.Dropout(config.dropout)
-        assert config.n_embd % config.n_head == 0
-        # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=False)
-        # output projection
-        self.c_proj = nn.Linear(config.n_embd, config.n_embd)
-        # regularization
-        self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
-        self.n_head = config.n_head
-        self.n_embd = config.n_embd
 
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, T, C = x.shape # Batch size, Sequence length, Embedding dimensionality
 
         # --- 1. Input & Embedding Layers ---
         # The model takes token indices as input. These layers learn vector representations.
@@ -445,22 +405,29 @@ class FeedForward(nn.Module):
 
         # 2. Reshape and transpose Q, K, V to prepare for multi-head attention.
         #    The shape changes from (B, T, C) to (B, n_head, T, head_size).
-        #    This brings the head dimension forward, allowing each head to perform attention independently.
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
 
         # 3. Perform scaled dot-product attention using the fused kernel.
         #    - `is_causal=True` handles the causal masking automatically.
         #    - Dropout is applied internally if the model is in training mode.
-        #    - The scaling by 1/sqrt(head_size) is also handled internally.
-        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+        y = F.scaled_dot_product_attention(
+            q, k, v,
+            attn_mask=None,
+            dropout_p=self.dropout if self.training else 0,
+            is_causal=True
+        )
 
         # 4. Re-assemble all head outputs side-by-side.
-        #    The transpose and contiguous().view() operations reverse the reshaping from step 2,
-        #    concatenating the head outputs to get a final shape of (B, T, C).
         y = y.transpose(1, 2).contiguous().view(B, T, C)
 
+        # 5. Apply the final output projection and residual dropout.
+        y = self.resid_dropout(self.c_proj(y))
+        return y
+
+class FeedForward(nn.Module):
+    """A simple linear layer followed by a non-linearity"""
         # 5. Apply the final output projection.
         y = self.dropout(self.c_proj(y))
         return y
@@ -588,8 +555,20 @@ class Block(nn.Module):
             # The cross-entropy loss compares the predicted logits with the true next-token `targets`.
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
-        return logits, loss
+    def __init__(self, config: GPTConfig):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(config.n_embd, 4 * config.n_embd),
+            nn.GELU(),
+            nn.Linear(4 * config.n_embd, config.n_embd),
+            nn.Dropout(config.dropout),
+        )
 
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
+
+class Block(nn.Module):
+    """Transformer block: communication followed by computation"""
     def generate(self, idx, max_new_tokens, temperature=1.0, top_p=None):
         """
         Generates a sequence of tokens autoregressively.
@@ -818,12 +797,12 @@ class Block(nn.Module):
     #     training. The configuration used here (Pre-LN) is a common and robust
     #     variant.
 
-    def __init__(self, config):
+    def __init__(self, config: GPTConfig):
         super().__init__()
         self.ln_1 = nn.LayerNorm(config.n_embd)
-        self.attn = CausalSelfAttention(config)
+        self.attn = MultiHeadAttention(config)
         self.ln_2 = nn.LayerNorm(config.n_embd)
-        self.mlp = MLP(config)
+        self.mlp = FeedForward(config)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # The output of the attention layer is added to the original input (residual connection).
@@ -889,9 +868,9 @@ class Block(nn.Module):
         # The same is done for the MLP layer.
         # The output of the attention layer is added to the original input.
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass for a transformer block."""
+        # First sub-layer: Self-Attention, preceded by LayerNorm, followed by a residual connection.
         x = x + self.attn(self.ln_1(x))
-        # The output of the MLP is added to the output of the attention block.
+        # Second sub-layer: Feed-Forward, preceded by LayerNorm, followed by a residual connection.
         x = x + self.mlp(self.ln_2(x))
         return x
 
@@ -1835,45 +1814,9 @@ class MLP(nn.Module):
     def __init__(self, config: GPTConfig):
     """A simple multi-layer perceptron."""
     def __init__(self, config: GPTConfig):
-    # [INJECTOR: THE ROLE OF THE FEED-FORWARD NETWORK (MLP)]
-    #
-    # This module implements the Feed-Forward Network (FFN), the second major
-    # component of a Transformer block (after the attention mechanism). While the
-    # attention mechanism is responsible for communication and information routing
-    # between tokens, the MLP is responsible for the actual computation and
-    # transformation of the information for each token independently.
-    #
-    # ---
-    #
-    # **Architectural Design**
-    #
-    # The MLP consists of two linear layers with a non-linear activation function
-    # in between.
-    #
-    #   1.  `c_fc`: The first linear layer, which expands the dimensionality of the
-    #       input embedding (`n_embd`) by a factor of 4. This expansion creates
-    #       a higher-dimensional "thinking space" for the model to process the
-    #       information. The expansion factor of 4 is a standard, empirically-
-    #       derived choice from the original Transformer paper ("Attention Is All
-    #       You Need").
-    #
-    #   2.  `gelu`: The GELU (Gaussian Error Linear Unit) activation function.
-    #       Unlike simpler activations like ReLU, GELU provides a smoother,
-    #       probabilistically-inspired non-linearity. It weights inputs by their
-    #       magnitude, which has been shown to be highly effective in
-    #       Transformer models.
-    #
-    #   3.  `c_proj`: The second linear layer, which projects the high-dimensional
-    #       representation back down to the original embedding dimension. This
-    #       "projection" step finalizes the computation for the block.
-    #
-    # In essence, the MLP allows the model to process the rich, context-aware
-    # representations generated by the attention mechanism and extract higher-level
-    # features, before passing the result to the next block or the final output.
-
-    def __init__(self, config):
         super().__init__()
         self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd)
+        self.gelu    = nn.GELU()
         self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd)
         self.dropout = nn.Dropout(config.dropout)
 
@@ -1882,7 +1825,7 @@ class MLP(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass for the MLP."""
         x = self.c_fc(x)
-        x = F.gelu(x)
+        x = self.gelu(x)
         x = self.c_proj(x)
         x = self.dropout(x)
         return x
