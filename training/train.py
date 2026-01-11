@@ -32,7 +32,7 @@ def get_batch(data, block_size, batch_size, device):
     return x, y
 
 # --- Main Training Loop ---
-def main(config):
+def run_training(config):
     # --- Setup ---
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
@@ -109,4 +109,4 @@ if __name__ == '__main__':
     config.setdefault('training', {})['output_dir'] = 'training/checkpoints'
     config.setdefault('data', {})['path'] = 'dataset/processed/train.txt'
 
-    main(config)
+    run_training(config)
