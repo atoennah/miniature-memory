@@ -1,3 +1,4 @@
+# NanoGPT-Lite Configuration (Small - Optimized)
 # NanoGPT-Lite Configuration (Small - Optimized by Bolt)
 
 model:
@@ -11,6 +12,8 @@ tokenizer:
   type: character-level
 
 training:
+  batch_size: 16
+  learning_rate: 5e-5
   batch_size: 32
   learning_rate: 5e-5  # Reduced LR for stability
   batch_size: 64 # Optimized: Power of 2 for GPU efficiency
