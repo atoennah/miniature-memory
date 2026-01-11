@@ -1,4 +1,7 @@
 """
+Handles the model training loop, optimization, and checkpointing.
+"""
+
 Handles the model training loop, checkpointing, and evaluation.
 """
 import os
@@ -33,6 +36,10 @@ import torch
 from .model import GPT, GPTConfig
 
 class Trainer:
+    """
+    Manages the training process for the GPT model.
+    """
+    def __init__(self, model: GPT, optimizer: torch.optim.Optimizer, config: dict, device: str):
     """Manages the model training loop."""
     def __init__(self, config, data_manager, device):
         self.config = config
@@ -89,6 +96,28 @@ class Trainer:
 
         Args:
             model (GPT): The GPT model to be trained.
+            optimizer (torch.optim.Optimizer): The optimizer for training.
+            config (dict): The training configuration.
+            device (str): The device to run training on ('cpu' or 'cuda').
+        """
+        self.model = model
+        self.optimizer = optimizer
+        self.config = config
+        self.device = device
+
+    def train(self, data_manager):
+        """
+        Runs the main training loop.
+
+        Args:
+            data_manager (DataManager): The data manager providing training batches.
+        """
+        print("\nStarting training...")
+        for step in range(self.config['training']['max_steps']):
+            # Get a batch of data
+            xb, yb = data_manager.get_batch()
+
+            # Evaluate the loss
             optimizer (Optimizer): The optimizer for training.
             data_manager (DataManager): The data manager providing training batches.
             device (str): The device to run training on ('cpu' or 'cuda').

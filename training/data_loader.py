@@ -1,3 +1,7 @@
+"""
+Handles loading and preparing the dataset for training.
+"""
+
 import torch
 
 class DataManager:
@@ -21,6 +25,8 @@ import torch
 
 class DataManager:
     """
+    Manages the training data, including loading, tokenization, and batching.
+    """
     Manages loading, tokenizing, and batching of the training data.
     This class encapsulates all data-related logic to keep the training
     script clean and focused on the training loop itself.
@@ -42,6 +48,10 @@ class DataManager:
 
         Args:
             data_path (str): The path to the training data file.
+            block_size (int): The context size for the model.
+            batch_size (int): The number of sequences in a batch.
+            device (str): The device to move tensors to ('cpu' or 'cuda').
+        """
             data_path (str): Path to the training data file.
             block_size (int): The context size for predictions.
             block_size (int): The context length for predictions.
@@ -64,6 +74,34 @@ class DataManager:
         self.batch_size = batch_size
         self.device = device
 
+        self.text = self._read_data()
+        self.chars = sorted(list(set(self.text)))
+        self.vocab_size = len(self.chars)
+
+        self._stoi = {ch: i for i, ch in enumerate(self.chars)}
+        self._itos = {i: ch for i, ch in enumerate(self.chars)}
+
+        self.data = self._encode_text()
+
+    def _read_data(self) -> str:
+        """Reads the training data from the specified path."""
+        with open(self.data_path, 'r', encoding='utf-8') as f:
+            return f.read()
+
+    def _encode_text(self) -> torch.Tensor:
+        """Encodes the text into a tensor of integers."""
+        encoded_text = [self._stoi[c] for c in self.text]
+        return torch.tensor(encoded_text, dtype=torch.long)
+
+    def encode(self, s: str) -> list[int]:
+        """Encodes a string using the vocabulary."""
+        return [self._stoi[c] for c in s]
+
+    def decode(self, l: list[int]) -> str:
+        """Decodes a list of integers back to a string."""
+        return ''.join([self._itos[i] for i in l])
+
+    def get_batch(self) -> tuple[torch.Tensor, torch.Tensor]:
         # Read the text file once.
         with open(self.data_path, 'r', encoding='utf-8') as f:
             self.text = f.read()

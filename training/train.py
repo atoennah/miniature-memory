@@ -1,4 +1,10 @@
 """
+This script serves as the main entry point for the training pipeline.
+
+It orchestrates the data loading, model initialization, and the training
+process by leveraging the DataManager and Trainer classes.
+"""
+
 Main entry point for training the GPT model.
 """
 Main script to run the GPT model training process.
@@ -32,6 +38,16 @@ import argparse
 import torch
 import yaml
 import torch
+from .model import GPT, GPTConfig
+from .data_loader import DataManager
+from .trainer import Trainer
+
+def run_training(config: dict):
+    """
+    Orchestrates the model training process.
+
+    Args:
+        config (dict): A dictionary containing the training configuration.
 
 from .data_loader import DataManager
 from .trainer import Trainer
@@ -440,6 +456,15 @@ def main():
         device=device
     )
 
+    # --- Optimizer ---
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=float(config['training']['learning_rate'])
+    )
+
+    # --- Trainer ---
+    trainer = Trainer(model, optimizer, config, device)
+    trainer.train(data_manager)
     # --- Run Training ---
     trainer.train(data_manager)
     )
@@ -601,6 +626,26 @@ if __name__ == '__main__':
     main()
     # Load the configuration file
     with open(args.config, 'r') as f:
+        config_from_file = yaml.safe_load(f)
+
+    # Define defaults for standalone execution, which can be overridden by the config file.
+    # This maintains compatibility with the main `run.py` orchestrator.
+    config = {
+        'training': {
+            'max_steps': 100,
+            'eval_interval': 10,
+            'output_dir': 'training/checkpoints',
+        },
+        'data': {
+            'path': 'dataset/processed/train.txt'
+        }
+    }
+    # Deep merge the config from file into the defaults
+    for key, value in config_from_file.items():
+        if isinstance(value, dict) and key in config:
+            config[key].update(value)
+        else:
+            config[key] = value
         config = yaml.safe_load(f)
 
     # Set default values for the training configuration
