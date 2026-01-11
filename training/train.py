@@ -10,6 +10,23 @@ import torch
 import argparse
 import torch
 import yaml
+from typing import Dict, Any
+import torch
+
+from .data_loader import DataManager
+from .trainer import Trainer
+
+def main(config: Dict[str, Any]):
+    """
+    Main function to run the training pipeline.
+
+    Args:
+        config (Dict[str, Any]): The configuration dictionary.
+    """
+    # --- Setup ---
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    # --- Data ---
 from typing import Dict, Any, Tuple, List, Callable
 
 from .model import GPT, GPTConfig
@@ -331,6 +348,8 @@ def main(config: Dict[str, Any]) -> None:
     # Initialize the Trainer
     trainer = Trainer(config, data_manager)
     # --- Training ---
+    trainer = Trainer(config, data_manager)
+    trainer.train()
     training_config = config['training']
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -461,6 +480,9 @@ if __name__ == '__main__':
     config.setdefault('training', {})['eval_interval'] = 10
     config.setdefault('training', {})['output_dir'] = 'training/checkpoints'
     config.setdefault('data', {})['path'] = 'dataset/processed/train.txt'
+    # Add block_size to the config if not present, as DataManager needs it.
+    config.setdefault('model', {})['block_size'] = 256
+
 
     # --- Run the Training ---
     trainer = Trainer(config)

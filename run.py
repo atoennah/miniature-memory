@@ -144,6 +144,13 @@ def main():
             print(f"Error: Configuration file not found at '{args.config}'", file=sys.stderr)
             sys.exit(1)
 
+        # Re-apply the hardcoded values from the original train.py for consistency
+        config.setdefault('training', {})['max_steps'] = 100
+        config.setdefault('training', {})['eval_interval'] = 10
+        config.setdefault('training', {})['output_dir'] = 'training/checkpoints'
+        config.setdefault('data', {})['path'] = 'dataset/processed/train.txt'
+        config.setdefault('model', {})['block_size'] = 256
+
         run_training(config)
         print("--- Training completed successfully ---\n")
 
