@@ -62,21 +62,35 @@ class Trainer:
         return torch.optim.AdamW(self.model.parameters(), lr=learning_rate)
 
     def run(self) -> None:
-        """Executes the main training loop."""
+        """Executes the main training loop with mixed precision and gradient clipping."""
         print("\nStarting training...")
         start_time = time.time()
         max_steps = self.config['training']['max_steps']
         eval_interval = self.config['training']['eval_interval']
+        grad_clip = self.config['training'].get('grad_clip', 1.0)
+
+        # Use AMP scaler if on CUDA for performance
+        scaler = torch.cuda.amp.GradScaler(enabled=(self.device == 'cuda'))
 
         for step in range(max_steps):
-            # Fetch a batch of data
             xb, yb = self.data_manager.get_batch()
 
-            # Perform a forward and backward pass
-            logits, loss = self.model(xb, yb)
+            # Forward pass with Automatic Mixed Precision
+            with torch.amp.autocast(device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')):
+                logits, loss = self.model(xb, yb)
+
+            # Backward pass
             self.optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            self.optimizer.step()
+            scaler.scale(loss).backward()
+
+            # Gradient Clipping to prevent explosions
+            if grad_clip > 0:
+                scaler.unscale_(self.optimizer)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip)
+
+            # Update weights
+            scaler.step(self.optimizer)
+            scaler.update()
 
             # Log progress
             if step % eval_interval == 0 or step == max_steps - 1:

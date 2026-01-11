@@ -5,6 +5,14 @@ import argparse
 MIN_FILE_LENGTH = 50  # Minimum number of characters
 MIN_PRINTABLE_RATIO = 0.85 # Minimum ratio of printable characters
 
+# --- Language Guard ---
+# A file is considered Indonesian only if it contains a sufficient number
+# of common Indonesian stop-words.
+INDONESIAN_STOP_WORDS = {
+    "yang", "dan", "aku", "dia", "dengan", "tidak", "ini", "itu", "ke", "di"
+}
+MIN_STOP_WORD_COUNT = 5
+
 def is_printable(char):
     """Checks if a character is printable, including common whitespace."""
     return char.isprintable() or char in ('\n', '\r', '\t')
@@ -31,6 +39,12 @@ def validate_file(filepath):
 
         if printable_ratio < MIN_PRINTABLE_RATIO:
             return False, f"Low printable ratio ({printable_ratio:.2f})"
+
+        # --- Language Guard Check ---
+        words = set(content.lower().split())
+        stop_word_matches = words.intersection(INDONESIAN_STOP_WORDS)
+        if len(stop_word_matches) < MIN_STOP_WORD_COUNT:
+            return False, f"Failed language check (found {len(stop_word_matches)} Indonesian stop-words)"
 
         return True, "Valid"
 

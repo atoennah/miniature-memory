@@ -8,16 +8,37 @@ ALLOWED_CHARS = re.compile(r'[^a-zA-Z0-9\s.,?!\'"()-]')
 REPEATED_WHITESPACE = re.compile(r'[ \t]+')
 REPEATED_NEWLINES = re.compile(r'\n{3,}')
 
+# Blacklist for common Indonesian gambling ad keywords.
+# These are case-insensitive.
+GAMBLING_AD_KEYWORDS = [
+    "slot gacor", "judi online", "daftar segera", "bonus new member",
+    "zeus", "pragmatic play", "agen bola", "togel"
+]
+
 def clean_content(content):
     """
-    Cleans the text content by removing non-allowed characters and normalizing whitespace.
+    Cleans the text content by removing non-allowed characters, normalizing
+    whitespace, and filtering out paragraphs containing blacklisted keywords.
 
     Args:
         content (str): The raw text content.
 
     Returns:
-        str: The cleaned text content.
+        str: The cleaned text content, or an empty string if all content is filtered.
     """
+    # --- "Slot Gacor" Filter ---
+    # Split the content into paragraphs and filter out those containing ads.
+    paragraphs = content.split('\n')
+    cleaned_paragraphs = []
+    for p in paragraphs:
+        # Check if any blacklisted keyword appears in the paragraph (case-insensitive)
+        if not any(keyword in p.lower() for keyword in GAMBLING_AD_KEYWORDS):
+            cleaned_paragraphs.append(p)
+
+    # Re-join the content after filtering
+    content = "\n".join(cleaned_paragraphs)
+
+    # --- Standard Cleaning ---
     # Remove any characters not in our whitelist
     cleaned = ALLOWED_CHARS.sub('', content)
 
