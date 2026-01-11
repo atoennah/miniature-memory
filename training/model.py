@@ -780,6 +780,7 @@ class CausalSelfAttention(nn.Module):
         self.dropout = config.dropout
         self.n_head = config.n_head
         self.n_embd = config.n_embd
+        self.dropout = config.dropout
         # [OPTIMIZATION] Bolt ⚡: Fused Scaled Dot-Product Attention
         # Replaced the manual attention implementation with PyTorch's optimized
         # `scaled_dot_product_attention`. This function fuses the matrix multiplication,
@@ -816,6 +817,9 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
 
+        # Use PyTorch's fused scaled dot-product attention for efficiency
+        dropout_p = self.dropout if self.training else 0.0
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=dropout_p, is_causal=True)
         # Use fused attention.
         # The `is_causal` flag handles the masking automatically.
         # The dropout is applied internally during the attention calculation.
