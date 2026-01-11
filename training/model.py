@@ -675,6 +675,7 @@ class CausalSelfAttention(nn.Module):
         self.dropout = config.dropout
         self.n_head = config.n_head
         self.n_embd = config.n_embd
+
         # Flash Attention-specific dropout
         self.dropout = config.dropout
         # Flash Attention makes this unnecessary
@@ -700,6 +701,17 @@ class CausalSelfAttention(nn.Module):
         # The output is then split into three parts.
         q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
 
+        # [BOLT] Replaced manual attention with scaled_dot_product_attention
+        # This single function replaces the manual implementation of:
+        #   - Calculating attention scores (q @ k.transpose)
+        #   - Scaling
+        #   - Causal masking
+        #   - Softmax
+        #   - Attention dropout
+        #   - Multiplying by values (att @ v)
+        # It's significantly faster due to kernel fusion.
+        dropout_p = self.attn_dropout.p if self.training else 0.0
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=dropout_p, is_causal=True)
         # --- 2. RESHAPE FOR MULTI-HEAD ATTENTION ---
         # Reshape q, k, v to prepare them for multi-head processing.
         # The embedding dimension `C` is split into `n_head` heads, each of size `C // n_head`.
