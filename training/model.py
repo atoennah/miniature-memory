@@ -780,6 +780,12 @@ class CausalSelfAttention(nn.Module):
         self.dropout = config.dropout
         self.n_head = config.n_head
         self.n_embd = config.n_embd
+        # [OPTIMIZATION] Bolt ⚡: Fused Scaled Dot-Product Attention
+        # Replaced the manual attention implementation with PyTorch's optimized
+        # `scaled_dot_product_attention`. This function fuses the matrix multiplication,
+        # scaling, masking, softmax, and dropout into a single, high-performance kernel.
+        # This reduces memory bandwidth usage and can leverage hardware-specific
+        # backends like FlashAttention for a significant speedup.
 
         # The causal mask. This is a lower-triangular matrix of ones.
         # When applied, it ensures that a position `i` can only attend to
@@ -805,6 +811,18 @@ class CausalSelfAttention(nn.Module):
     def forward(self, x):
         # Input shape: (Batch Size, Sequence Length, Embedding Dimension)
         B, T, C = x.size()
+        q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+
+        # Use fused attention.
+        # The `is_causal` flag handles the masking automatically.
+        # The dropout is applied internally during the attention calculation.
+        dropout_p = self.attn_dropout.p if self.training else 0
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True, dropout_p=dropout_p)
+
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
 
         # [INJECTOR NOTE: TENSOR TRANSFORMATION FOR MULTI-HEAD ATTENTION]
         # 1.  Calculate Q, K, V for all heads in batch.
