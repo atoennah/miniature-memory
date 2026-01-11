@@ -565,6 +565,9 @@ class CausalSelfAttention(nn.Module):
         self.resid_dropout = nn.Dropout(config.dropout)
         self.n_head = config.n_head
         self.n_embd = config.n_embd
+        # Flash Attention makes this unnecessary
+        # self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
+        #                              .view(1, 1, config.block_size, config.block_size))
         # Causal mask to ensure that attention is only applied to the left in the input sequence
         self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
                                      .view(1, 1, config.block_size, config.block_size))
@@ -585,6 +588,10 @@ class CausalSelfAttention(nn.Module):
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
         # Causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        # ⚡ Fused Attention Kernel ⚡
+        # Replaced the manual attention implementation with a single, more efficient
+        # call to scaled_dot_product_attention, which uses Flash Attention under the hood.
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.attn_dropout.p, is_causal=True)
         # [INJECTOR NOTE]: For improved performance, the manual attention calculation below can be replaced
         # with `torch.nn.functional.scaled_dot_product_attention`. This function leverages fused kernels
         # like FlashAttention (if available on the hardware), which can significantly accelerate computation

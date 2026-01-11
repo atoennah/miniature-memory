@@ -1,3 +1,6 @@
+import os
+import time
+import torch
 import argparse
 import torch
 import yaml
@@ -129,6 +132,7 @@ def main(config: Dict[str, Any]) -> None:
     )
 
     print("\nStarting training...")
+    t0 = time.time()
     start_time = time.time()
     for step in range(config['training']['max_steps']):
         # Get a batch of data
@@ -172,6 +176,14 @@ def load_config(config_path: str) -> Dict[str, Any]:
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
 
+    t1 = time.time()
+    elapsed_time = t1 - t0
+
+    total_tokens = config['training']['max_steps'] * config['training']['batch_size'] * gpt_config.block_size
+    tokens_per_second = total_tokens / elapsed_time
+
+    print(f"Training finished in {elapsed_time:.2f} seconds.")
+    print(f"Tokens per second: {tokens_per_second:.2f}")
     # Apply default values for simplicity in this training script
     config.setdefault('training', {})
     config['training'].setdefault('max_steps', 100)
