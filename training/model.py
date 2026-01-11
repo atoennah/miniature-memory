@@ -1186,6 +1186,11 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
 
+        # ⚡ Bolt: Use Flash Attention for a significant speed boost.
+        # This single fused kernel is much faster than the manual implementation.
+        # Correctly apply dropout during training.
+        dropout_p = self.attn_dropout.p if self.training else 0.0
+        y = F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p, is_causal=True)
         # 3. --- Scaled Dot-Product Attention ---
         # Q * K^T -> (B, n_head, T, head_size) @ (B, n_head, head_size, T) -> (B, n_head, T, T)
         # The result is an "attention score" matrix for each head.
