@@ -2,6 +2,7 @@ import os
 import torch
 import argparse
 import yaml
+import time
 from model import GPT, GPTConfig
 
 # --- Data Loading and Tokenization ---
@@ -31,7 +32,7 @@ def get_batch(data, block_size, batch_size, device):
     return x, y
 
 # --- Main Training Loop ---
-def main(config):
+def run_training(config):
     # --- Setup ---
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
@@ -60,6 +61,7 @@ def main(config):
     )
 
     print("\nStarting training...")
+    start_time = time.time()
     for step in range(config['training']['max_steps']):
         # Get a batch of data
         xb, yb = get_batch(
@@ -78,7 +80,9 @@ def main(config):
         if step % config['training']['eval_interval'] == 0:
             print(f"Step {step:4d}/{config['training']['max_steps']}: Loss: {loss.item():.4f}")
 
-    print("Training finished.")
+    end_time = time.time()
+    duration = end_time - start_time
+    print(f"Training finished in {duration:.2f} seconds.")
 
     # --- Save Checkpoint ---
     checkpoint_path = os.path.join(config['training']['output_dir'], 'model.pt')
@@ -105,4 +109,4 @@ if __name__ == '__main__':
     config.setdefault('training', {})['output_dir'] = 'training/checkpoints'
     config.setdefault('data', {})['path'] = 'dataset/processed/train.txt'
 
-    main(config)
+    run_training(config)

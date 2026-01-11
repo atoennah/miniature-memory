@@ -26,9 +26,7 @@ import math
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from dataclasses import dataclass
 
-@dataclass
 class GPTConfig:
     block_size: int = 256
     vocab_size: int = 65 # Default: char-level for English text
@@ -75,6 +73,16 @@ class MultiHeadAttention(nn.Module):
         # A final projection layer to combine the outputs of all heads.
         self.c_proj = nn.Linear(config.n_embd, config.n_embd)
         self.dropout = nn.Dropout(config.dropout)
+        assert config.n_embd % config.n_head == 0
+        # key, query, value projections for all heads, but in a batch
+        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=False)
+        # output projection
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd)
+        # regularization
+        self.attn_dropout = nn.Dropout(config.dropout)
+        self.resid_dropout = nn.Dropout(config.dropout)
+        self.n_head = config.n_head
+        self.n_embd = config.n_embd
 
 
     def forward(self, x):
@@ -104,21 +112,17 @@ class MultiHeadAttention(nn.Module):
         # 5. Apply the final output projection.
         y = self.dropout(self.c_proj(y))
         return y
+        B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
-class FeedForward(nn.Module):
-    """A simple linear layer followed by a non-linearity"""
+        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
-    def __init__(self, config: GPTConfig):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(config.n_embd, 4 * config.n_embd),
-            nn.GELU(),
-            nn.Linear(4 * config.n_embd, config.n_embd),
-            nn.Dropout(config.dropout),
-        )
-
-    def forward(self, x):
-        return self.net(x)
+        # efficient attention using Flash Attention CUDA kernels
+        # is_causal=True will automatically apply the lower-triangular mask
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.attn_dropout.p if self.training else 0.0, is_causal=True)
 
 class Block(nn.Module):
     # [INJECTOR: THE ANATOMY OF A TRANSFORMER BLOCK]
@@ -140,13 +144,11 @@ class Block(nn.Module):
     #    the training of deep Transformers. It keeps the activations well-behaved throughout
     #    the network.
     """Transformer block: communication followed by computation"""
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
 
-    def __init__(self, config: GPTConfig):
-        super().__init__()
-        self.sa = MultiHeadAttention(config)
-        self.ffwd = FeedForward(config)
-        self.ln1 = nn.LayerNorm(config.n_embd)
-        self.ln2 = nn.LayerNorm(config.n_embd)
+        # output projection
+        y = self.resid_dropout(self.c_proj(y))
+        return y
 
     def forward(self, x):
         # First sub-layer: Self-Attention, preceded by LayerNorm, followed by a residual connection.
@@ -154,53 +156,75 @@ class Block(nn.Module):
         # Second sub-layer: Feed-Forward, preceded by LayerNorm, followed by a residual connection.
         x = x + self.ffwd(self.ln2(x))
         return x
+        tok_emb = self.wte(idx)
+        pos_emb = self.wpe(pos)
+        x = self.drop(tok_emb + pos_emb)
 
-class GPT(nn.Module):
+        for block in self.h:
+            x = block(x)
 
-    def __init__(self, config: GPTConfig):
-        super().__init__()
-        self.config = config
-        self.token_embedding_table = nn.Embedding(config.vocab_size, config.n_embd)
-        self.position_embedding_table = nn.Embedding(config.block_size, config.n_embd)
-        self.blocks = nn.Sequential(*[Block(config) for _ in range(config.n_layer)])
-        self.ln_f = nn.LayerNorm(config.n_embd)
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size)
-
-        self.apply(self._init_weights)
-
-    def _init_weights(self, module):
-        if isinstance(module, nn.Linear):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-
-    def forward(self, idx, targets=None):
-        B, T = idx.shape
-        tok_emb = self.token_embedding_table(idx)
-        pos_emb = self.position_embedding_table(torch.arange(T, device=idx.device))
-        x = tok_emb + pos_emb
-        x = self.blocks(x)
         x = self.ln_f(x)
         logits = self.lm_head(x)
 
         loss = None
         if targets is not None:
-            B, T, C = logits.shape
-            logits_flat = logits.view(B * T, C)
-            targets_flat = targets.view(B * T)
-            loss = F.cross_entropy(logits_flat, targets_flat)
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
         return logits, loss
 
-    @torch.no_grad()
-    def generate(self, idx, max_new_tokens):
-        for _ in range(max_new_tokens):
-            idx_cond = idx[:, -self.config.block_size:]
-            logits, _ = self(idx_cond)
-            logits = logits[:, -1, :]
-            probs = F.softmax(logits, dim=-1)
-            idx_next = torch.multinomial(probs, num_samples=1)
-            idx = torch.cat((idx, idx_next), dim=1)
-        return idx
+class Block(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.ln_1 = nn.LayerNorm(config.n_embd)
+        self.attn = CausalSelfAttention(config)
+        self.ln_2 = nn.LayerNorm(config.n_embd)
+        self.mlp = MLP(config)
+
+    def forward(self, x):
+        x = x + self.attn(self.ln_1(x))
+        x = x + self.mlp(self.ln_2(x))
+        return x
+
+class CausalSelfAttention(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        assert config.n_embd % config.n_head == 0
+        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd)
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd)
+        self.attn_dropout = nn.Dropout(config.dropout)
+        self.resid_dropout = nn.Dropout(config.dropout)
+        self.n_head = config.n_head
+        self.n_embd = config.n_embd
+        self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
+                                     .view(1, 1, config.block_size, config.block_size))
+
+    def forward(self, x):
+        B, T, C = x.size()
+        q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+
+        att = (q @ k.transpose(-2, -1)) * (1.0 / (k.size(-1)**0.5))
+        att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+        att = F.softmax(att, dim=-1)
+        att = self.attn_dropout(att)
+        y = att @ v
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
+
+        y = self.resid_dropout(self.c_proj(y))
+        return y
+
+class MLP(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd)
+        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd)
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x):
+        x = self.c_fc(x)
+        x = F.gelu(x)
+        x = self.c_proj(x)
+        x = self.dropout(x)
+        return x
