@@ -1,3 +1,8 @@
+import torch
+from typing import Tuple, List, Callable
+
+class DataManager:
+    """Manages loading, tokenizing, and batching of training data."""
 """
 Handles loading and preparing the dataset for training.
 """
@@ -47,6 +52,7 @@ class DataManager:
         Initializes the DataManager.
 
         Args:
+            data_path (str): Path to the training data file.
             data_path (str): The path to the training data file.
             block_size (int): The context size for the model.
             batch_size (int): The number of sequences in a batch.
@@ -73,6 +79,15 @@ class DataManager:
         self.block_size = block_size
         self.batch_size = batch_size
         self.device = device
+        self.data, self.vocab_size, self.encode, self.decode = self._load_and_tokenize_data()
+
+    def _load_and_tokenize_data(self) -> Tuple[torch.Tensor, int, Callable, Callable]:
+        """
+        Reads the training data and creates a simple char-level tokenizer.
+
+        Returns:
+            Tuple[torch.Tensor, int, Callable, Callable]: A tuple containing the tokenized data,
+                                                          vocabulary size, encoder, and decoder functions.
 
         self.text = self._read_data()
         self.chars = sorted(list(set(self.text)))
@@ -178,6 +193,8 @@ class DataManager:
         stoi = {ch: i for i, ch in enumerate(chars)}
         itos = {i: ch for i, ch in enumerate(chars)}
 
+        encode = lambda s: [stoi.get(c, 0) for c in s]
+        decode = lambda l: ''.join([itos.get(i, '') for i in l])
         encode = lambda s: [stoi[c] for c in s]
         decode = lambda l: ''.join([itos[i] for i in l])
         stoi: Dict[str, int] = {ch: i for i, ch in enumerate(chars)}
@@ -195,6 +212,7 @@ class DataManager:
         Generates a small batch of data of inputs x and targets y.
 
         Returns:
+            Tuple[torch.Tensor, torch.Tensor]: A tuple containing input and target tensors.
             A tuple containing the input and target tensors.
             Tuple[torch.Tensor, torch.Tensor]: A tuple containing the input and target tensors.
 from typing import Tuple, List, Dict

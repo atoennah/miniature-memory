@@ -1211,6 +1211,7 @@ class CausalSelfAttention(nn.Module):
         self.dropout = config.dropout
         self.n_head = config.n_head
         self.n_embd = config.n_embd
+        self.dropout = config.dropout
         # Causal mask to ensure that attention is only applied to the left in the input sequence.
         # [INJECTOR NOTE: THE CAUSAL MASK]
         # The `bias` buffer is a lower-triangular matrix of ones. This mask is applied
@@ -1486,6 +1487,11 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
 
+        # ⚡ Bolt-Optimization: Use PyTorch's built-in, fused scale-dot-product attention.
+        # This is not only cleaner but also leverages hardware-specific optimizations
+        # (like FlashAttention) for a significant performance boost.
+        dropout_p = self.dropout if self.training else 0
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=dropout_p, is_causal=True)
         # Flash Attention
         # The dropout probability should only be non-zero during training.
         dropout_p = self.attn_dropout.p if self.training else 0.0

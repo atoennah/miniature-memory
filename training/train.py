@@ -34,6 +34,67 @@ from typing import Tuple, List, Dict, Any, Callable
 import torch
 import time
 import torch
+import yaml
+import argparse
+from typing import Dict, Any
+
+from .model import GPT, GPTConfig
+from .data_loader import DataManager
+
+class Trainer:
+    """Manages the model, optimizer, and the core training loop."""
+
+    def __init__(self, config: Dict[str, Any], model: GPT, optimizer: torch.optim.Optimizer, data_manager: DataManager):
+        """
+        Initializes the Trainer.
+
+        Args:
+            config (Dict[str, Any]): The training configuration.
+            model (GPT): The GPT model to train.
+            optimizer (torch.optim.Optimizer): The optimizer.
+            data_manager (DataManager): The data manager.
+        """
+        self.config = config
+        self.model = model
+        self.optimizer = optimizer
+        self.data_manager = data_manager
+
+    def train(self):
+        """Runs the main training loop."""
+        print("\nStarting training...")
+        for step in range(self.config['training']['max_steps']):
+            xb, yb = self.data_manager.get_batch()
+
+            _, loss = self.model(xb, yb)
+            self.optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            self.optimizer.step()
+
+            if step % self.config['training']['eval_interval'] == 0:
+                print(f"Step {step:4d}/{self.config['training']['max_steps']}: Loss: {loss.item():.4f}")
+
+        print("Training finished.")
+        self._save_checkpoint()
+
+    def _save_checkpoint(self):
+        """Saves the model checkpoint."""
+        output_dir = self.config['training']['output_dir']
+        os.makedirs(output_dir, exist_ok=True)
+        checkpoint_path = os.path.join(output_dir, 'model.pt')
+        torch.save(self.model.state_dict(), checkpoint_path)
+        print(f"\nModel checkpoint saved to: {checkpoint_path}")
+
+def run_training(config: Dict[str, Any]):
+    """
+    Sets up and runs the training process.
+
+    Args:
+        config (Dict[str, Any]): The training configuration.
+    """
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"Using device: {device}")
+
+    # --- Data ---
 import argparse
 import torch
 import yaml
@@ -508,6 +569,11 @@ def main():
     training_config = config['training']
     optimizer = torch.optim.AdamW(
         model.parameters(),
+        lr=float(config['training']['learning_rate'])
+    )
+
+    trainer = Trainer(config, model, optimizer, data_manager)
+    trainer.train()
         lr=float(training_config['learning_rate'])
     )
 
@@ -598,11 +664,19 @@ def main() -> None:
     parser.add_argument(
         '--config',
         type=str,
-        default='training/configs/small.yaml',
+        default='configs/small.yaml',
         help='Path to the YAML configuration file.'
     )
     args = parser.parse_args()
 
+    # Construct the full path to the config file
+    # This assumes the script is run from the root of the repository
+    config_path = os.path.join('training', args.config)
+
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+
+    # Hardcoded values for standalone execution
     try:
         with open(args.config, 'r') as f:
             config = yaml.safe_load(f)
@@ -659,6 +733,9 @@ if __name__ == '__main__':
     config['training'].setdefault('max_steps', 100)
     config['training'].setdefault('eval_interval', 10)
     config['training'].setdefault('output_dir', 'training/checkpoints')
+
+    config.setdefault('data', {})
+    config['data'].setdefault('path', 'dataset/processed/train.txt')
     config['training'].setdefault('learning_rate', 1e-3)
     config['training'].setdefault('batch_size', 32)
 
