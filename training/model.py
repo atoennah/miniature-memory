@@ -1486,6 +1486,10 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
 
+        # Flash Attention
+        # The dropout probability should only be non-zero during training.
+        dropout_p = self.attn_dropout.p if self.training else 0.0
+        y = F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p, is_causal=True)
         # Use PyTorch's optimized scaled dot-product attention
         y = F.scaled_dot_product_attention(q, k, v, is_causal=True, dropout_p=self.attn_dropout.p if self.training else 0.0)
         # ⚡ Bolt: Replaced manual attention with fused scaled_dot_product_attention
