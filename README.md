@@ -25,6 +25,49 @@ For detailed technical information, including setup, repository structure, and t
 
 ## Project Status
 
+## Project Documentation
+
+This project is managed with a strong focus on clear, centralized documentation to ensure alignment and long-term stability. For detailed information, please refer to the documents in the `.jules/` directory.
+
+-   **`.jules/AGENTS.md`**: Defines the roles, responsibilities, and governance model for all agents and contributors.
+-   **`.jules/ROADMAP.md`**: Outlines the complete, unified development plan for the data pipeline and model evolution.
+
+## Quick Start
+
+### 1. Setup
+
+To set up the environment and install all necessary dependencies, run the setup script:
+```bash
+./setup.sh
+```
+
+### 2. Run the Pipeline
+
+The entire data processing and training pipeline is orchestrated by the `run.py` script.
+
+**To run the full pipeline:**
+```bash
+python3 run.py
+```
+
+**To skip specific steps:**
+```bash
+# Skip data validation and cleaning
+python3 run.py --skip-validation --skip-cleaning
+
+# Run only the training step
+python3 run.py --skip-validation --skip-cleaning --skip-preparation
+```
+
+### 3. Google Colab
+
+For a notebook-driven workflow, open and run the cells in `NanoGPT_Adult_Training.ipynb`.
+
+## Core Principles
+
+-   **Constraint-First:** All work is optimized for tight resource limits (~2GB RAM).
+-   **Automation:** The entire data and training pipeline is designed to be fully automated and reproducible.
+-   **Incremental Growth:** The dataset grows continuously, and the model is trained incrementally from checkpoints.
 This project is under active development. You can follow the development plan in the [ROADMAP.md](ROADMAP.md).
 A minimal, memory-aware dataset and training pipeline for small GPT-style models, optimized for tight resource constraints.
 
