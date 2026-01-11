@@ -2,6 +2,12 @@ import argparse
 import sys
 from importlib.metadata import PackageNotFoundError, version
 
+
+from scripts.validate_raw import run_validation
+from scripts.clean_dataset import run_cleaning
+from scripts.prepare_data import run_preparation
+from training.train import main as run_training
+
 def check_dependencies():
     """Checks if all the required packages are installed."""
     try:
@@ -27,6 +33,12 @@ def check_dependencies():
             print(f" - {package}", file=sys.stderr)
         print("\nPlease install them by running: pip install -r requirements.txt", file=sys.stderr)
         sys.exit(1)
+def _handle_import_error(module_name):
+    """Prints a user-friendly error message and exits."""
+    print(f"Error: The required module '{module_name}' is not installed.", file=sys.stderr)
+    print("Please install the necessary dependencies by running:", file=sys.stderr)
+    print("  pip install -r requirements.txt", file=sys.stderr)
+    sys.exit(1)
 
 def main():
     """
@@ -72,24 +84,54 @@ def main():
     print("Starting the miniature-memory pipeline...\n")
 
     if not args.skip_validation:
+        # Defer import to improve startup speed when skipping pipeline stages.
+        from scripts.validate_raw import run_validation
+        try:
+            from scripts.validate_raw import run_validation
+        except ImportError:
+            _handle_import_error("scripts.validate_raw")
         print("--- Running Validation ---")
         from scripts.validate_raw import run_validation
         run_validation("dataset/raw")
         print("--- Validation completed successfully ---\n")
 
     if not args.skip_cleaning:
+        # Defer import to improve startup speed when skipping pipeline stages.
+        from scripts.clean_dataset import run_cleaning
+        try:
+            from scripts.clean_dataset import run_cleaning
+        except ImportError:
+            _handle_import_error("scripts.clean_dataset")
         print("--- Running Cleaning ---")
         from scripts.clean_dataset import run_cleaning
         run_cleaning("dataset/raw", "dataset/cleaned")
         print("--- Cleaning completed successfully ---\n")
 
     if not args.skip_preparation:
+        # Defer import to improve startup speed when skipping pipeline stages.
+        from scripts.prepare_data import run_preparation
+        try:
+            from scripts.prepare_data import run_preparation
+        except ImportError:
+            _handle_import_error("scripts.prepare_data")
         print("--- Running Preparation ---")
         from scripts.prepare_data import run_preparation
         run_preparation("dataset/cleaned", "dataset/processed")
         print("--- Preparation completed successfully ---\n")
 
     if not args.skip_training:
+        # Defer import to improve startup speed when skipping pipeline stages.
+        from training.train import run_training
+        try:
+            from training.train import run_training
+            import yaml
+        except ImportError as e:
+            # Differentiate between our code and third-party libs
+            if e.name == 'yaml':
+                _handle_import_error('pyyaml')
+            else:
+                _handle_import_error("training.train")
+
         print("--- Running Training ---")
         import yaml
         from training.train import run_training
@@ -99,6 +141,7 @@ def main():
                 config = yaml.safe_load(f)
         except FileNotFoundError:
             print(f"Error: Config file not found at {args.config}", file=sys.stderr)
+            print(f"Error: Configuration file not found at '{args.config}'", file=sys.stderr)
             sys.exit(1)
 
         run_training(config)
