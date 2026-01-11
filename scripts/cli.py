@@ -27,7 +27,7 @@ def main():
 
     # Process command - delegates to the process module
     process_parser = subparsers.add_parser(
-        "process", help="Fetch, extract, and save content from new URLs."
+        "process", help="Heuristically crawl index pages to find and process story URLs."
     )
     process_parser.set_defaults(func=run_process)
 
