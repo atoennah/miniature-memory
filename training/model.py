@@ -919,6 +919,10 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
 
+        # ⚡ Bolt: Fused self-attention for performance.
+        # Replaced manual masking and softmax with a single, optimized kernel.
+        # This reduces memory I/O and leverages hardware-specific acceleration.
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.attn_dropout.p, is_causal=True)
         # 3. [CALCULATE ATTENTION SCORES (THE LOGOS OF ATTENTION)]
         # Formula: Softmax( (Q @ K^T) / sqrt(d_k) ) @ V
         # The dot product between Q and K^T gives the raw attention scores.
