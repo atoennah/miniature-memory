@@ -45,6 +45,58 @@ class GPT(nn.Module):
 
         return logits, loss
 
+    def generate(self, idx, max_new_tokens, temperature=1.0, top_p=None):
+        """
+        Generates a sequence of tokens autoregressively.
+
+        Args:
+            idx (torch.Tensor): Input sequence of tokens (B, T).
+            max_new_tokens (int): The number of new tokens to generate.
+            temperature (float): Softmax temperature. Higher values make the output more random.
+            top_p (float, optional): If specified, uses nucleus sampling. Keeps the top p cumulative probability mass.
+
+        Returns:
+            torch.Tensor: The generated sequence of tokens (B, T + max_new_tokens).
+        """
+        for _ in range(max_new_tokens):
+            # Crop the context to the maximum block size
+            idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+
+            # Forward pass to get logits
+            logits, _ = self(idx_cond)
+
+            # Focus on the last time step and apply temperature scaling
+            logits = logits[:, -1, :] / temperature # (B, vocab_size)
+
+            # Optional top-p (nucleus) sampling
+            if top_p is not None and 0.0 < top_p < 1.0:
+                sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+                cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+
+                # Remove tokens with cumulative probability above the threshold
+                sorted_indices_to_remove = cumulative_probs > top_p
+                # Shift the indices to the right to keep the first token above the threshold
+                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                sorted_indices_to_remove[..., 0] = 0
+
+                # Create a mask for the original logits tensor by "unsorting" the mask
+                # that was created on the sorted logits.
+                indices_to_remove = torch.zeros_like(logits, dtype=torch.bool).scatter_(
+                    1, sorted_indices, sorted_indices_to_remove
+                )
+                logits.masked_fill_(indices_to_remove, float('-inf'))
+
+            # Apply softmax to get probabilities
+            probs = F.softmax(logits, dim=-1) # (B, vocab_size)
+
+            # Sample from the distribution
+            idx_next = torch.multinomial(probs, num_samples=1) # (B, 1)
+
+            # Append the new token to the sequence
+            idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
+
+        return idx
+
 class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
