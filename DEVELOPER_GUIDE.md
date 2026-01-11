@@ -1,3 +1,30 @@
+# miniature-memory
+
+A minimal, memory-aware dataset and training pipeline for small GPT-style models
+
+miniature-memory is a project focused on building, growing, and training a small text-based language model using a NanoGPT-from-scratch approach, optimized for tight resource constraints (e.g. Google Colab, ~2GB RAM environments).
+
+The core of this project is the dataset pipeline: scraping, extracting, storing, cleaning, preparing, and incrementally training on text data in a fully automated way.
+
+## What This Project Does
+
+- Scrapes text content from the web using Google Search as an entry point
+- Extracts readable text using browser-style “read mode”
+- Stores raw text as an ever-growing dataset
+- Cleans and prepares data for training
+- Trains a small GPT-style model incrementally
+- Saves checkpoints and artifacts so training can resume anytime
+- Designed to run on Linux and Google Colab
+
+This project is not a large-model framework.
+It is intentionally small, explicit, and constrained.
+
+## Target Model
+
+- **Architecture:** GPT-style decoder-only transformer
+- **Base implementation:** NanoGPT-style (from scratch)
+- **Scale:** very small models
+- **Training:** incremental, resumable
 # Developer Guide: miniature-memory
 
 This guide provides a comprehensive overview of the miniature-memory project, its goals, architecture, and development roadmap. It is intended to be the single source of truth for all technical and strategic information.
@@ -400,6 +427,17 @@ Techniques used:
 - Colab support: draft / usable
 
 See `ROADMAP.md` for what’s next.
+
+## Summary
+
+miniature-memory is about doing more with less:
+
+- small model
+- small machine
+- growing dataset
+- full control over every step
+
+No black boxes, no magic, no assumptions.
 Welcome, contributor. This guide is your single source of truth for setting up your environment, understanding the data pipeline, and contributing to the `miniature-memory` project. Adherence to these guidelines is essential for maintaining the quality and reproducibility of our work.
 
 ## 1. Environment Setup
