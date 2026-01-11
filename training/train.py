@@ -1,3 +1,10 @@
+"""
+Main script to run the GPT model training process.
+
+This script acts as the orchestrator, bringing together the data manager,
+model, and trainer to execute the training loop based on a provided
+configuration file.
+"""
 import torch
 from .data_loader import DataManager
 from .trainer import Trainer
@@ -23,6 +30,17 @@ import argparse
 import torch
 import yaml
 import torch
+
+from .data_loader import DataManager
+from .model import GPT, GPTConfig
+from .trainer import Trainer
+
+def run_training(config: dict):
+    """
+    Orchestrates the training process from configuration.
+
+    Args:
+        config (dict): A dictionary containing the training configuration.
 
 from .data_loader import DataManager
 from .trainer import Trainer
@@ -191,6 +209,12 @@ def run_training(config: Dict[str, Any]) -> None:
     print(f"Using device: {device}")
 
     # --- Data Manager ---
+    data_manager = DataManager(
+        data_path=config['data']['path'],
+        block_size=config['model']['block_size'],
+        batch_size=config['training']['batch_size'],
+        device=device
+    )
     output_dir = config['training']['output_dir']
     os.makedirs(output_dir, exist_ok=True)
 
@@ -281,6 +305,7 @@ class Trainer:
     # --- Model ---
     model_config = config['model']
     gpt_config = GPTConfig(
+        vocab_size=data_manager.vocab_size,
         vocab_size=vocab_size,
         block_size=model_config['block_size'],
         n_layer=model_config['n_layer'],
@@ -381,6 +406,15 @@ def main(config: Dict[str, Any]) -> None:
     trainer.train(data_manager)
     )
 
+    # --- Optimizer ---
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=float(config['training']['learning_rate'])
+    )
+
+    # --- Trainer ---
+    trainer = Trainer(config, model, optimizer, data_manager)
+    trainer.train()
     # --- Trainer ---
     trainer = Trainer(config, data_manager)
     trainer.train()
@@ -514,6 +548,9 @@ if __name__ == '__main__':
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
 
+    # --- Configuration Defaults for Standalone Execution ---
+    # These defaults are applied when running the script directly,
+    # allowing for quick tests without modifying the main run.py orchestrator.
     # Add some hardcoded values not in the yaml for this simple loop
     # These are defaults for standalone execution of this script.
     # The main `run.py` script will often override these.

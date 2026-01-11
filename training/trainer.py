@@ -1,3 +1,13 @@
+"""
+Handles the training loop for the GPT model.
+"""
+import os
+import torch
+
+class Trainer:
+    """Manages the model, optimizer, and the training loop."""
+
+    def __init__(self, config, model, optimizer, data_manager):
 import os
 import torch
 from .model import GPT, GPTConfig
@@ -47,6 +57,24 @@ class Trainer:
         Initializes the Trainer.
 
         Args:
+            config: The training configuration.
+            model: The GPT model instance.
+            optimizer: The optimizer instance.
+            data_manager: The DataManager instance.
+        """
+        self.config = config
+        self.model = model
+        self.optimizer = optimizer
+        self.data_manager = data_manager
+
+    def train(self):
+        """Runs the main training loop."""
+        print("\nStarting training...")
+        for step in range(self.config['training']['max_steps']):
+            # Get a batch of data
+            xb, yb = self.data_manager.get_batch()
+
+            # Evaluate the loss
             config (Dict): The configuration dictionary.
 import torch.nn as nn
 from typing import Dict, Any

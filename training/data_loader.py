@@ -1,3 +1,10 @@
+"""
+Handles loading and preparing the training data for the GPT model.
+"""
+import torch
+
+class DataManager:
+    """Manages the training data, including loading, tokenization, and batching."""
 import torch
 
 class DataManager:
@@ -22,6 +29,7 @@ class DataManager:
         Initializes the DataManager.
 
         Args:
+            data_path (str): The path to the training data file.
             data_path (str): Path to the training data file.
             block_size (int): The context size for predictions.
             block_size (int): The context length for predictions.
@@ -43,6 +51,15 @@ class DataManager:
         self.block_size = block_size
         self.batch_size = batch_size
         self.device = device
+        self.data, self.vocab_size, self.encode, self.decode = self._load_and_tokenize()
+
+    def _load_and_tokenize(self):
+        """
+        Reads the training data, creates a char-level tokenizer, and encodes the text.
+
+        Returns:
+            Tuple[torch.Tensor, int, Callable, Callable]: A tuple containing the encoded
+                data tensor, the vocabulary size, and the encoder/decoder functions.
         self.data, self.vocab_size, self.encode, self.decode = self._load_data()
 
     def _load_data(self) -> Tuple[torch.Tensor, int, Callable[[str], List[int]], Callable[[List[int]], str]]:
@@ -81,6 +98,7 @@ class DataManager:
         data = torch.tensor(encode(text), dtype=torch.long)
         return data, vocab_size, encode, decode
 
+    def get_batch(self):
     def get_batch(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Generates a small batch of data of inputs x and targets y.
