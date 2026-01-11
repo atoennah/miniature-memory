@@ -16,8 +16,7 @@ from importlib.metadata import PackageNotFoundError, version
 from scripts.validate_raw import run_validation
 from scripts.clean_dataset import run_cleaning
 from scripts.prepare_data import run_preparation
-from training.train import main as train_main
-from training.train import main as run_training
+from training.train import main
 
 def check_dependencies():
     """Checks if all the required packages are installed."""
@@ -91,7 +90,10 @@ def main():
         default="training/configs/small.yaml",
         help="Path to the training configuration file."
     )
-    args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
+
+    # Pass the unknown arguments to the training script
+    sys.argv = [sys.argv[0]] + unknown
 
     print("Starting the miniature-memory pipeline...\n")
 
@@ -137,9 +139,8 @@ def main():
     if not args.skip_training:
         from training.train import run_training
         # Defer import to improve startup speed when skipping pipeline stages.
-        from training.train import run_training
         try:
-            from training.train import run_training
+            from training.train import main as run_training
             import yaml
         except ImportError as e:
             # Differentiate between our code and third-party libs
@@ -149,42 +150,7 @@ def main():
                 _handle_import_error("training.train")
 
         print("--- Running Training ---")
-        import yaml
-        from training.train import run_training
-        with open(args.config, 'r') as f:
-            config = yaml.safe_load(f)
-        import yaml
-        from training.train import run_training
-
-        # Set default values for the training config
-        config.setdefault('training', {})
-        config['training'].setdefault('max_steps', 100)
-        config['training'].setdefault('eval_interval', 10)
-        config['training'].setdefault('output_dir', 'training/checkpoints')
-
-        config.setdefault('data', {})
-        config['data'].setdefault('path', 'dataset/processed/train.txt')
-
-        train_main(config)
-        from training.train import run_training
-        try:
-            with open(args.config, 'r') as f:
-                config = yaml.safe_load(f)
-        except FileNotFoundError:
-            print(f"Error: Config file not found at {args.config}", file=sys.stderr)
-            print(f"Error: Configuration file not found at '{args.config}'", file=sys.stderr)
-            sys.exit(1)
-
-        # Re-apply the hardcoded values from the original train.py for consistency
-        config.setdefault('training', {})['max_steps'] = 100
-        config.setdefault('training', {})['eval_interval'] = 10
-        config.setdefault('training', {})['output_dir'] = 'training/checkpoints'
-        config.setdefault('data', {})['path'] = 'dataset/processed/train.txt'
-        config.setdefault('model', {})['block_size'] = 256
-
-        # Defer the import of the training module
-        from training.train import main as run_training
-        run_training(config)
+        run_training()
         print("--- Training completed successfully ---\n")
 
     print("Pipeline finished.")
