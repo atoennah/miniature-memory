@@ -563,6 +563,7 @@ class CausalSelfAttention(nn.Module):
         # regularization
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
+        self.dropout = config.dropout
         self.n_head = config.n_head
         self.n_embd = config.n_embd
         # Flash Attention makes this unnecessary
@@ -587,6 +588,9 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
+        # Flash attention variant
+        dropout_p = self.dropout if self.training else 0.0
+        y = F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p, is_causal=True)
         # Causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         # ⚡ Fused Attention Kernel ⚡
         # Replaced the manual attention implementation with a single, more efficient
