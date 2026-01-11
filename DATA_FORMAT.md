@@ -27,17 +27,20 @@ The format for all control tokens is `<|token_name|>`.
 
 -   `<|scene_break|>`: Indicates a significant break between scenes, such as a change in time, location, or focus.
 -   `<|summary|>`: Prefixes a condensed summary of previous text, to be used for the rolling summary memory mechanism.
+-   `<|story_start|>`: A special token to explicitly mark the beginning of a distinct story or document.
 -   `<|end_of_text|>`: A special token to explicitly mark the end of a distinct story or document. This helps the model learn boundaries.
 
 ### Example Usage in `train.txt`:
 
 ```
+<|story_start|>
 This is the first part of the story. It ends here.
 <|scene_break|>
 This is the second scene, taking place hours later.
 ...
 and that's the end of the story.
 <|end_of_text|>
+<|story_start|>
 This is a completely new story starting now.
 ...
 ```

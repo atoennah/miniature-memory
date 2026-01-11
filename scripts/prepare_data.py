@@ -37,8 +37,9 @@ def run_preparation(cleaned_dir, processed_dir):
             for filepath in cleaned_files:
                 with open(filepath, 'r', encoding='utf-8') as infile:
                     # Write content and add two newlines as a separator
+                    outfile.write("<|story_start|>\n")
                     outfile.write(infile.read())
-                    outfile.write("\n\n")
+                    outfile.write("\n<|end_of_text|>\n")
 
                 relative_path = os.path.relpath(filepath, cleaned_dir)
                 print(f"[✅ APPENDED] {relative_path}")
