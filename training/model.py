@@ -566,6 +566,8 @@ class CausalSelfAttention(nn.Module):
         self.dropout = config.dropout
         self.n_head = config.n_head
         self.n_embd = config.n_embd
+        # Flash Attention-specific dropout
+        self.dropout = config.dropout
         # Flash Attention makes this unnecessary
         # self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
         #                              .view(1, 1, config.block_size, config.block_size))
@@ -580,6 +582,7 @@ class CausalSelfAttention(nn.Module):
         # Calculate query, key, values for all heads in batch and move head forward to be the batch dim
 
     def forward(self, x):
+        B, T, C = x.size() # Batch size, sequence length, embedding dimensionality (n_embd)
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
         # Calculate query, key, values for all heads in batch and move head forward to be the batch dim
@@ -587,6 +590,14 @@ class CausalSelfAttention(nn.Module):
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+
+        # Causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        # This is the single most important line in the whole GPT model.
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # Re-assemble all head outputs side by side
+
+        # Output projection
 
         # Flash attention variant
         dropout_p = self.dropout if self.training else 0.0
