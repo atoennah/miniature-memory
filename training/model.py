@@ -1086,6 +1086,13 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
 
+        # ⚡ Bolt: Use PyTorch's fused scaled_dot_product_attention.
+        # This is significantly faster than the manual implementation because it
+        # leverages optimized kernels like FlashAttention under the hood.
+        # `is_causal=True` handles the causal mask internally.
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.attn_dropout.p if self.training else 0, is_causal=True)
+
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
         # ⚡ Bolt: Use fused scaled_dot_product_attention for efficiency.
         # This single function replaces the manual implementation of matrix multiplication,
         # scaling, masking, softmax, and dropout. It leverages optimized kernels like
