@@ -1,0 +1,365 @@
+# Developer Guide: miniature-memory
+
+This guide provides a detailed technical overview of the miniature-memory project, covering repository structure, setup, and the data pipeline. For a high-level project summary, see the main [README.md](README.md).
+
+## Repository Structure
+
+The repository is organized into distinct modules for data handling, scripting, and training:
+
+```
+.
+├── dataset/
+│   ├── raw/          # Raw extracted text (one file per content)
+│   ├── cleaned/      # Cleaned text (derived)
+│   └── processed/    # Tokenized / training-ready data
+# Developer Guide
+
+This guide provides a technical overview of the miniature-memory project, including repository structure, setup, and the training workflow.
+
+## Repository Structure
+
+```
+.
+├── dataset/
+│   ├── raw/          # raw extracted text (one file per content)
+│   ├── cleaned/      # cleaned text (derived)
+│   └── processed/    # tokenized / training-ready data
+│
+├── scraper/
+│   ├── search/       # Google search helpers
+│   ├── fetch/        # URL fetching & rendering
+│   └── extract/      # Read-mode text extraction
+│   └── extract/      # read-mode text extraction
+│
+├── scripts/
+│   ├── validate_raw.py
+│   ├── clean_dataset.py
+│   ├── prepare_data.py
+│   └── stats.py
+│
+├── training/
+│   ├── model.py      # Core GPT model definition
+│   ├── train.py      # Training loop
+│   └── configs/      # YAML configuration for training runs
+│
+├── .jules/
+│   ├── AGENTS.md     # Definitions of agent personas
+│   └── BOLT_JOURNAL.md # Log for experimental findings
+│
+├── run.py            # Main pipeline orchestrator
+│   ├── model.py
+│   ├── train.py
+│   └── configs/
+│
+├── run.py
+├── setup.sh
+├── NanoGPT_Training.ipynb
+└── README.md
+```
+
+## Setup
+
+To set up the development environment and install all dependencies, run the `setup.sh` script:
+```bash
+./setup.sh
+```
+This script will create a Python virtual environment and install all packages listed in `requirements.txt`.
+
+## Training Workflow
+
+The entire data processing and training pipeline is orchestrated by the `run.py` script, which provides a unified interface for all stages.
+
+### Local / Linux
+
+To run the complete pipeline from data validation to model training, execute:
+```bash
+python3 run.py
+```
+
+You can also control the pipeline flow using command-line flags to skip specific steps:
+
+```bash
+# Skip validation and cleaning, and run only preparation and training
+python3 run.py --skip-validation --skip-cleaning
+
+# Run only the training step
+python3 run.py --skip-validation --skip-cleaning --skip-preparation
+```
+
+To use a specific training configuration, use the `--config` flag:
+```bash
+python3 run.py --config training/configs/large.yaml
+To set up the environment, run the `setup.sh` script:
+```bash
+./setup.sh
+```
+This will install all the necessary dependencies.
+
+## Training Workflow
+
+The entire data processing and training pipeline can be run using the unified `run.py` script.
+
+### Local / Linux
+
+To run the entire pipeline, simply execute:
+```bash
+python run.py
+```
+
+You can also skip specific steps using command-line flags:
+```bash
+# Skip validation and cleaning
+python run.py --skip-validation --skip-cleaning
+
+# Run only the training step
+python run.py --skip-validation --skip-cleaning --skip-preparation
+```
+
+### Google Colab
+
+- Open `NanoGPT_Training.ipynb`.
+- Upload or clone the repository into the Colab environment.
+- Run all cells from top to bottom.
+- Training artifacts and checkpoints are saved periodically to the Colab instance.
+
+## Dataset Design
+
+The dataset is structured in three stages: raw, cleaned, and processed. This design ensures that all transformations are scripted and reproducible.
+
+### Raw Dataset
+
+-   **Content:** Raw data is plain text, stored exactly as extracted from the source.
+-   **Structure:** Each piece of content is stored in its own file.
+-   **Immutability:** Raw files are considered append-only and should never be edited manually after being written.
+
+Example filename:
+`dataset/raw/source_example/20250112_231455__SRC__abc123__9f3a.txt`
+
+The raw dataset serves as the immutable source of truth for the entire pipeline.
+
+### Cleaned Dataset
+
+-   **Derivation:** Generated automatically from the raw data.
+-   **Purpose:** Removes noise such as HTML artifacts, encoding errors, and extra whitespace.
+-   **Format:** Remains plain text.
+
+### Processed Dataset
+
+-   **Derivation:** Generated from the cleaned data.
+-   **Purpose:** This is the training-ready data.
+-   **Transformations:** The data is tokenized (character-level) and split into `train.bin` and `val.bin` files.
+
+All cleaned and processed data can be regenerated from the raw dataset at any time, ensuring reproducibility.
+
+## Scraping Pipeline (High Level)
+
+1.  **Discover:** Use Google Search to find candidate URLs based on a query.
+2.  **Fetch & Render:** Download the page content and render it in a headless browser to execute JavaScript.
+3.  **Extract:** Use a "read mode" algorithm to extract the main narrative text, ignoring boilerplate.
+4.  **Save:** Store the extracted text into `dataset/raw/` with a descriptive filename.
+5.  **Log:** Record the source URL and timestamp in the metadata manifest.
+
+The scraping pipeline is designed to be repeatable and incremental, allowing the dataset to grow over time.
+
+## Resource Constraints & Design Philosophy
+
+The project is designed to operate under significant resource constraints:
+
+-   **Target RAM:** ~2GB
+-   **Environment:** Free-tier Google Colab, low-end CPUs.
+
+This is achieved through several intentional design choices:
+
+-   **Character-Level Tokenization:** Keeps the model's vocabulary and embedding table extremely small.
+-   **Small Context Window:** The `block_size` (e.g., 256) limits the size of the attention matrix.
+-   **Small Batch Sizes:** Reduces memory pressure during training.
+-   **Checkpoint-Based Training:** Allows training to be stopped and resumed at any time.
+
+The core philosophy is **constraint-first development**: every architectural decision is made to support low-resource environments.
+
+## Incremental Growth
+
+The entire pipeline is designed for continuous, incremental growth:
+
+-   New raw data can be added to the `dataset/raw/` directory at any time.
+-   The cleaning and preparation scripts run deterministically on the entire dataset.
+-   The training script can resume from the latest checkpoint, incorporating new data without restarting from scratch.
+
+This allows the model to evolve and improve as the dataset expands.
+- Open `NanoGPT_Training.ipynb`
+- Upload or clone repository
+- Run all cells top to bottom
+- Training artifacts are saved periodically
+
+## Dataset Design
+
+### Raw Dataset
+
+- Raw data is plain text only
+- One file = one content item
+- Stored exactly as extracted
+- Never edited after being written
+
+Example:
+`dataset/raw/source_example/20250112_231455__SRC__abc123__9f3a.txt`
+
+Raw data exists only to be consumed by scripts, not humans.
+
+### Cleaned Dataset
+
+- Generated from raw data
+- Removes noise (HTML artifacts, encoding issues)
+- Normalizes whitespace
+- Still text-only
+
+### Processed Dataset
+
+- Tokenized
+- Split into train / validation
+- Ready for model training
+
+All cleaned and processed data can be re-generated from raw data at any time.
+
+## Scraping Pipeline (High Level)
+
+1.  Search using Google
+2.  Collect candidate URLs
+3.  Render page (headless / read-mode)
+4.  Extract readable text
+5.  Save text into `dataset/raw/`
+6.  Log source and timestamp
+
+Scraping is designed to be repeatable and incremental.
+
+## Resource Constraints
+
+Designed to work with:
+
+- ~2GB RAM (minimum target)
+- Limited disk
+- Free-tier Colab environments
+
+Techniques used:
+
+- small vocab
+- small context window
+- small batch sizes
+- checkpoint-based training
+
+## Incremental Growth
+
+- New raw data can be added at any time
+- Cleaning and preparation re-run deterministically
+- Training resumes from latest checkpoint
+- Dataset grows continuously without restarting from zero
+
+## Current Status
+
+- Dataset pipeline: in progress
+- Scraping automation: active development
+- Training loop: functional
+- Colab support: draft / usable
+
+See `ROADMAP.md` for what’s next.
+Welcome, contributor. This guide is your single source of truth for setting up your environment, understanding the data pipeline, and contributing to the `miniature-memory` project. Adherence to these guidelines is essential for maintaining the quality and reproducibility of our work.
+
+## 1. Environment Setup
+
+This project is designed for a Linux-based environment and requires Python 3.12+.
+
+### Dependencies
+
+To install all required Python packages, run the following command from the root of the repository:
+
+```bash
+pip install -r requirements.txt
+```
+
+This will install `torch`, `pyyaml`, `psutil`, and other essential libraries.
+
+## 2. Core Project Structure
+
+Understanding the repository layout is key to contributing effectively.
+
+```
+.
+├── .jules/             # Agent-specific instructions and memory
+├── dataset/
+│   ├── raw/            # Append-only, immutable raw text files
+│   ├── cleaned/        # Script-generated cleaned text
+│   ├── processed/      # Tokenized, training-ready data files
+│   └── metadata/       # URL manifests and other metadata
+├── scraper/            # Code for discovering and extracting content
+├── scripts/            # Automation scripts for data processing and CLI tools
+├── training/           # Model definition, training loop, and configs
+├── .gitignore          # Specifies intentionally untracked files
+├── CONTRIBUTING.md     # The locked, non-negotiable project intent
+├── DEVELOPER_GUIDE.md  # This file
+├── README.md           # High-level project overview
+└── ROADMAP.md          # Long-term project goals
+```
+
+## 3. The Data Pipeline
+
+The data pipeline is the heart of this project. It's a multi-stage process designed to be fully automated and reproducible.
+
+### Stage 1: URL Discovery (Search)
+
+-   **Command:** `python3 scripts/cli.py search "<query>" --num-results <number>`
+-   **Purpose:** Uses Google Search to find potential URLs for scraping.
+-   **Output:** Appends new URLs to `dataset/metadata/urls.jsonl` with the status "new".
+
+### Stage 2: Content Fetching & Extraction
+
+-   **Command:** `python3 scripts/cli.py process`
+-   **Purpose:** Fetches the HTML for URLs marked "new", extracts the readable text content, and saves it.
+-   **Output:**
+    -   Raw text files are saved in `dataset/raw/source_<source-id>/`.
+    -   The corresponding URL entry in `urls.jsonl` is updated to "fetched".
+
+### Stage 3: Data Validation, Cleaning, and Preparation
+
+This is a sequence of three commands that must be run in order.
+
+1.  **Validate Raw Data:**
+    -   **Command:** `python3 scripts/validate_raw.py`
+    -   **Purpose:** Checks raw files for basic integrity.
+
+2.  **Clean Dataset:**
+    -   **Command:** `python3 scripts/clean_dataset.py`
+    -   **Purpose:** Normalizes whitespace, fixes encoding issues, and removes artifacts from the raw text. Generates the `dataset/cleaned/` directory.
+
+3.  **Prepare Data for Training:**
+    -   **Command:** `python3 scripts/prepare_data.py`
+    -   **Purpose:** Concatenates the cleaned data, performs character-level tokenization, and creates the final `train.txt` and `val.txt` files.
+    -   **Output:** `dataset/processed/train.txt` and `dataset/processed/val.txt`.
+
+**Golden Rule:** The `dataset/raw/` directory is sacred. Raw data is append-only and must never be manually edited. All transformations are handled by version-controlled scripts to ensure 100% reproducibility.
+
+## 4. Training the Model
+
+Once the dataset is processed, you can train the model.
+
+### Local Training
+
+-   **Command:** `python3 training/train.py --config training/configs/small.yaml`
+-   **Function:** Starts the training loop using the specified configuration file and the data in `dataset/processed/`.
+-   **Checkpoints:** Model checkpoints are saved periodically to the `out/` directory (by default).
+
+### Resuming Training
+
+Training is designed to be resumable. If the script is interrupted, simply run the same command again, and it will automatically load the latest checkpoint from the `out_dir` specified in the config.
+
+## 5. Generating Text
+
+To generate text from a trained model, use the generation script.
+
+-   **Command:** `python3 scripts/generate.py --max_new_tokens <number>`
+-   **Function:** Loads the latest checkpoint and generates a sample of the specified length.
+
+## 6. Contribution Workflow
+
+1.  **Sync with `main`:** Before starting any work, ensure your local branch is up-to-date with the latest `main`.
+2.  **Isolate Your Changes:** New features should be developed in separate modules or files whenever possible to minimize conflicts.
+3.  **Follow the Data Rules:** If your contribution touches the dataset, you must adhere to the append-only and script-driven transformation rules.
+4.  **Submit for Review:** All changes are reviewed by the Curator and the BDFL before being merged. Ensure your work is clean, documented, and aligned with the project's intent as described in `CONTRIBUTING.md`.
