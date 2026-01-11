@@ -894,6 +894,11 @@ class CausalSelfAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
         assert config.n_embd % config.n_head == 0
+        # Key, query, value projections for all heads, but in a batch
+        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd)
+        # Output projection
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd)
+        # Regularization
         # A single linear layer projects the input into Query, Key, and Value matrices.
         # This is an optimization: instead of three separate linear layers, we do one larger
         # matrix multiplication and then split the result.
@@ -955,6 +960,8 @@ class CausalSelfAttention(nn.Module):
         self.dropout = config.dropout
         self.n_head = config.n_head
         self.n_embd = config.n_embd
+        # Flash Attention-style dropout
+        self.dropout = config.dropout
         self.dropout = config.dropout # ⚡ Bolt: Store dropout rate for fused attention.
 
         # [INJECTOR NOTE: THE CAUSAL MASK]
@@ -971,6 +978,21 @@ class CausalSelfAttention(nn.Module):
     # leading to significant speedups and reduced memory usage by avoiding the materialization
     # of the large (B, n_head, T, T) attention matrix.
     def forward(self, x):
+        B, T, C = x.size() # Batch size, sequence length, embedding dimensionality (n_embd)
+
+        # Calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+
+        # Causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        # The core optimization: use Flash Attention if available.
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout, is_causal=True)
+
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # Re-assemble all head outputs side by side
+
+        # Output projection
         B, T, C = x.size() # B: Batch Size, T: Sequence Length, C: Embedding Dimension
 
         # 1. [COMPUTE Q, K, V]
