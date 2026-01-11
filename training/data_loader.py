@@ -1,4 +1,16 @@
 import torch
+
+class DataManager:
+    """
+    Manages loading, tokenizing, and batching of the training data.
+    This class encapsulates all data-related logic to keep the training
+    script clean and focused on the training loop itself.
+    """
+    def __init__(self, data_path, block_size, batch_size, device):
+        """
+        Initializes the DataManager.
+        Args:
+            data_path (str): The path to the training data file.
 from typing import Tuple, List, Callable
 from typing import Tuple, List, Dict, Callable
 
@@ -16,6 +28,17 @@ class DataManager:
             batch_size (int): The number of independent sequences to process in parallel.
             device (str): The device to move tensors to ('cpu' or 'cuda').
         """
+        self.block_size = block_size
+        self.batch_size = batch_size
+        self.device = device
+
+        # Read the raw text
+        with open(data_path, 'r', encoding='utf-8') as f:
+            text = f.read()
+
+        # Build a character-level tokenizer from the text
+        chars = sorted(list(set(text)))
+        self.vocab_size = len(chars)
         self.data_path = data_path
         self.block_size = block_size
         self.batch_size = batch_size
@@ -110,6 +133,14 @@ class DataManager:
         self.encode = lambda s: [stoi[c] for c in s]
         self.decode = lambda l: ''.join([itos[i] for i in l])
 
+        # Encode the entire dataset and store it as a tensor
+        self.data = torch.tensor(self.encode(text), dtype=torch.long)
+
+    def get_batch(self):
+        """
+        Generates a small batch of data of inputs x and targets y.
+        Returns:
+            A tuple of (x, y) tensors, where x is the input and y is the target.
         self.data = torch.tensor(self.encode(text), dtype=torch.long)
         print(f"Loaded {len(self.data)} tokens from '{data_path}'")
         print(f"Vocabulary size: {self.vocab_size}")

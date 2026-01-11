@@ -1,5 +1,13 @@
 import argparse
 import sys
+import yaml
+
+
+def main():
+    """
+    A unified script to run the miniature-memory pipeline.
+    This script orchestrates the validation, cleaning, preparation, and training stages.
+    """
 from importlib.metadata import PackageNotFoundError, version
 
 
@@ -155,10 +163,13 @@ def main():
         config.setdefault('data', {})['path'] = 'dataset/processed/train.txt'
         config.setdefault('model', {})['block_size'] = 256
 
+        # Defer the import of the training module
+        from training.train import main as run_training
         run_training(config)
         print("--- Training completed successfully ---\n")
 
     print("Pipeline finished.")
+
 
 if __name__ == "__main__":
     main()
