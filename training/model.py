@@ -1,5 +1,25 @@
 # [INJECTOR: THE PHILOSOPHY OF A FROM-SCRATCH GPT]
 #
+# This module is the pedagogical core of a miniature GPT implementation. Its purpose is not just to work,
+# but to teach. Every line is a deliberate choice to expose the fundamental mechanics of the Transformer
+# architecture as laid out in the original "Attention Is All You Need" paper (Vaswani et al., 2017).
+#
+# We intentionally avoid high-level abstractions where they would obscure the underlying logic. For instance,
+# instead of a monolithic `nn.TransformerEncoderLayer`, we build it from scratch using LayerNorm,
+# CausalSelfAttention, and a Multi-Layer Perceptron (MLP). This reveals the data flow and the purpose
+# of each component, particularly the residual connections that are critical for training deep networks.
+#
+# This implementation is designed for:
+#   1.  **Clarity:** To be read, understood, and modified by students of deep learning.
+#   2.  **Simplicity:** To demonstrate that a powerful language model can be built from a few core,
+#       comprehensible components.
+#   3.  **Correctness:** To faithfully implement the key architectural details, such as causal masking
+#       for autoregressive generation and scaled dot-product attention.
+#
+# Read this code not just as a script, but as a textbook. Each class is a chapter, each function a concept.
+#
+# [REFERENCE]: https://arxiv.org/abs/1706.03762
+
 # This file, `model.py`, is the pedagogical core of the `miniature-memory` project.
 # In alignment with the project's "No black boxes, no magic" principle, this implementation
 # is intentionally verbose and explicit. It is not merely a tool, but an educational artifact
@@ -360,6 +380,10 @@ class FeedForward(nn.Module):
         # where the deep processing and feature extraction happens.
         self.h = nn.ModuleList([Block(config) for _ in range(config.n_layer)])
 
+        # [IMPLEMENTATION NOTE]: The model is composed of three main parts:
+        # 1. An embedding layer for tokens (`wte`) and positions (`wpe`).
+        # 2. A stack of `n_layer` transformer blocks (`h`).
+        # 3. A final layer norm (`ln_f`) and a linear layer (`lm_head`) to produce logits.
         # --- 3. Output Layers ---
         # `ln_f`: A final LayerNorm applied after the last transformer block.
         # `lm_head`: The Language Model Head. A linear layer that projects the final
@@ -474,6 +498,10 @@ class Block(nn.Module):
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
         pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0)
 
+        # 1. --- Embeddings ---
+        # Each token index `idx` is mapped to a vector (`tok_emb`).
+        # Each position `pos` is also mapped to a vector (`pos_emb`).
+        # The two are summed to create a position-aware token representation.
         # Token and position embeddings
         # output projection
         y = self.resid_dropout(self.c_proj(y))
@@ -489,6 +517,16 @@ class Block(nn.Module):
         pos_emb = self.wpe(pos)
         x = self.drop(tok_emb + pos_emb)
 
+        # 2. --- Transformer Blocks ---
+        # The input `x` is processed sequentially by each block in the stack.
+        # Each block applies self-attention and an MLP, with residual connections.
+        for block in self.h:
+            x = block(x)
+
+        # 3. --- Final Layers ---
+        # The final layer norm stabilizes the activations before the final projection.
+        # The linear head (`lm_head`) projects the final transformer output to the vocabulary size,
+        # producing the raw logits for the next token prediction.
         # Transformer blocks
         for block in self.h:
             x = block(x)
@@ -499,6 +537,7 @@ class Block(nn.Module):
 
         loss = None
         if targets is not None:
+            # The cross-entropy loss compares the predicted logits with the true next-token `targets`.
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
         return logits, loss
@@ -577,6 +616,18 @@ class Block(nn.Module):
 # convention (GPT-2 style) that tends to improve training stability compared to applying it after.
 
 class Block(nn.Module):
+    # [INJECTOR: THE ANATOMY OF A TRANSFORMER BLOCK]
+    #
+    # A Transformer Block is the repeating unit of the GPT architecture. It has two main sub-layers:
+    #   1. A Multi-Head Causal Self-Attention layer.
+    #   2. A position-wise Feed-Forward Network (an MLP in this case).
+    #
+    # Crucially, each sub-layer is wrapped with two architectural patterns:
+    #   a. Pre-Layer Normalization: Normalization is applied *before* the main operation (attention or MLP).
+    #      This tends to lead to more stable training than post-layer norm.
+    #   b. Residual Connections: The input to the sub-layer is added to its output (`x = x + sublayer(ln(x))`).
+    #      This is the key to training very deep networks. It creates a "shortcut" for the gradient to
+    #      flow through, mitigating the vanishing gradient problem.
     # [INJECTOR: THE VERTEBRA OF THE TRANSFORMER]
     #
     # The Transformer Block is the fundamental repeating unit of the GPT architecture.
@@ -700,6 +751,8 @@ class Block(nn.Module):
 #                   the attention probabilities. Tokens that are more "important"
 #                   (higher attention score) contribute more to the output.
     def forward(self, x):
+        # The forward pass follows the "Pre-LayerNorm" structure.
+        # x -> LayerNorm -> Attention -> (+) -> x -> LayerNorm -> MLP -> (+) -> x
         # The forward pass follows the Pre-LayerNorm structure.
         # 1. Normalize the input, then pass it to the attention layer. Add the result back.
         x = x + self.attn(self.ln_1(x))
@@ -763,6 +816,34 @@ class Block(nn.Module):
 # from different representational subspaces at different positions. The outputs of all
 # heads are then concatenated and projected back to the original embedding dimension.
 class CausalSelfAttention(nn.Module):
+    # [INJECTOR: THE LOGOS OF SELF-ATTENTION]
+    #
+    # This module implements Causal Self-Attention, the core mechanism of the Transformer decoder.
+    # At a high level, attention allows a model to weigh the importance of different tokens in the input
+    # sequence when producing a representation for a given token. "Self-Attention" means the sequence
+    # attends to itself. "Causal" (or "masked") means that a token at position `i` can only attend to
+    # tokens at positions `j <= i`. This is crucial for autoregressive models that generate text one
+    # token at a time.
+    #
+    # The mathematical formulation is Scaled Dot-Product Attention:
+    #
+    #   Attention(Q, K, V) = softmax( (Q * K^T) / sqrt(d_k) ) * V
+    #
+    #   - Q (Query): A projection of the current token's representation. It "asks" a question.
+    #   - K (Key): A projection of all tokens' representations. It represents what each token "offers."
+    #   - V (Value): A projection of all tokens' representations. It's the content that gets aggregated.
+    #
+    # The dot product `Q * K^T` computes a similarity score between the query and each key.
+    # The scaling factor `1 / sqrt(d_k)` (where d_k is the dimension of K) is vital. Without it,
+    # for large `d_k`, the dot products can grow very large, pushing the softmax into regions with
+    # extremely small gradients, which harms learning. This is a critical and subtle implementation detail.
+    #
+    # Multi-Head Attention:
+    # Instead of one large attention calculation, we split the embedding dimension `n_embd` into `n_head`
+    # smaller subspaces ("heads"). Attention is computed independently in each head, and the results are
+    # concatenated. This allows the model to jointly attend to information from different representational
+    # subspaces at different positions. It's like having multiple experts look at the same sentence from
+    # different perspectives.
     # [INJECTOR: THE ENGINE OF TRANSFORMER - SCALED DOT-PRODUCT ATTENTION]
     #
     # This module implements Causal Self-Attention, also known as Masked Multi-Head Attention.
@@ -894,6 +975,10 @@ class CausalSelfAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
         assert config.n_embd % config.n_head == 0
+        # [IMPLEMENTATION NOTE]: A single linear layer projects the input `x` to Q, K, and V matrices simultaneously.
+        # This is an efficient optimization. `3 * config.n_embd` is for the concatenation of Q, K, V.
+        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd)
+        # This is the output projection layer, after the attention values have been aggregated.
         # Key, query, value projections for all heads, but in a batch
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd)
         # Output projection
@@ -961,6 +1046,10 @@ class CausalSelfAttention(nn.Module):
         self.dropout = config.dropout
         self.n_head = config.n_head
         self.n_embd = config.n_embd
+        # [IMPLEMENTATION NOTE]: The causal mask (`bias`) is registered as a buffer, not a parameter.
+        # This means it's part of the model's state but is not considered a trainable parameter.
+        # `torch.tril` creates a lower-triangular matrix, ensuring a token at position `i` can only
+        # attend to tokens at positions `j <= i`.
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
         if not self.flash:
@@ -987,6 +1076,17 @@ class CausalSelfAttention(nn.Module):
     # leading to significant speedups and reduced memory usage by avoiding the materialization
     # of the large (B, n_head, T, T) attention matrix.
     def forward(self, x):
+        B, T, C = x.size() # Batch size, Sequence length, Embedding dimensionality (n_embd)
+
+        # 1. --- Project to Q, K, V ---
+        # (B, T, C) -> (B, T, 3 * C) -> split into 3 * (B, T, C)
+        q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
+
+        # 2. --- Reshape for Multi-Head Attention ---
+        # (B, T, C) -> (B, T, n_head, head_size) -> (B, n_head, T, head_size)
+        # where head_size = C // n_head.
+        # The transpose is crucial: it brings the head dimension to the forefront, so the matrix multiplication
+        # for attention is performed independently for each head.
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
@@ -1086,6 +1186,23 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
 
+        # 3. --- Scaled Dot-Product Attention ---
+        # Q * K^T -> (B, n_head, T, head_size) @ (B, n_head, head_size, T) -> (B, n_head, T, T)
+        # The result is an "attention score" matrix for each head.
+        att = (q @ k.transpose(-2, -1)) * (1.0 / (k.size(-1)**0.5))
+        # Apply the causal mask. `masked_fill` replaces all positions where the mask is 0 with -infinity.
+        att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+        # Softmax normalizes the scores along the key dimension (dim=-1), turning them into probabilities.
+        att = F.softmax(att, dim=-1)
+        att = self.attn_dropout(att)
+        # Aggregate the values based on the attention scores.
+        # (B, n_head, T, T) @ (B, n_head, T, head_size) -> (B, n_head, T, head_size)
+        y = att @ v
+
+        # 4. --- Concatenate Heads and Project Output ---
+        # The `transpose` and `contiguous().view()` operations reverse the reshaping from step 2,
+        # effectively concatenating the heads' outputs.
+        # (B, n_head, T, head_size) -> (B, T, n_head, head_size) -> (B, T, C)
         # ⚡ Bolt: Use PyTorch's fused scaled_dot_product_attention.
         # This is significantly faster than the manual implementation because it
         # leverages optimized kernels like FlashAttention under the hood.
@@ -1324,6 +1441,7 @@ class CausalSelfAttention(nn.Module):
 # "inverted bottleneck" design.
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
 
+        # Final output projection.
         # output projection
         y = self.resid_dropout(self.c_proj(y))
         return y
