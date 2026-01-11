@@ -10,6 +10,18 @@ import torch
 import argparse
 import torch
 import yaml
+import torch
+
+from .data_loader import DataManager
+from .trainer import Trainer
+from typing import Dict
+
+def run_training(config: Dict):
+    """
+    Initializes and runs the training process.
+
+    Args:
+        config (Dict): The configuration dictionary for training.
 from typing import Dict, Any
 import torch
 
@@ -103,13 +115,13 @@ def get_batch(data: torch.Tensor, block_size: int, batch_size: int, device: str)
         batch_size: The number of independent sequences to process in parallel.
         device: The device to move the tensors to ('cpu' or 'cuda').
 
-
+"""
 def get_batch(data: torch.Tensor, block_size: int, batch_size: int, device: str) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
+"""
     Generates a small batch of data of inputs x and targets y.
-
+"""
 def get_batch(data: torch.Tensor, block_size: int, batch_size: int, device: str) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
+"""
     Generates a random batch of input-target pairs from the dataset.
 
     Args:
@@ -130,7 +142,7 @@ def get_batch(data: torch.Tensor, block_size: int, batch_size: int, device: str)
 
     Returns:
         Tuple[torch.Tensor, torch.Tensor]: A tuple containing the input and target tensors.
-    """
+
     # Generate random starting indices for the batches
     Returns:
         A tuple containing:
@@ -166,6 +178,7 @@ def run_training(config: Dict[str, Any]) -> None:
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
 
+    # --- Data Manager ---
     output_dir = config['training']['output_dir']
     os.makedirs(output_dir, exist_ok=True)
 
@@ -345,6 +358,11 @@ def main(config: Dict[str, Any]) -> None:
         device=device
     )
 
+    # --- Trainer ---
+    trainer = Trainer(config, data_manager)
+    trainer.train()
+    )
+
     # Initialize the Trainer
     trainer = Trainer(config, data_manager)
     # --- Training ---
@@ -473,6 +491,15 @@ if __name__ == '__main__':
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
 
+    # Add some hardcoded values not in the yaml for this simple loop
+    # These are defaults for standalone execution of this script.
+    # The main `run.py` script will often override these.
+    config.setdefault('training', {})
+    config['training'].setdefault('max_steps', 100)
+    config['training'].setdefault('eval_interval', 10)
+    config['training'].setdefault('output_dir', 'training/checkpoints')
+    config.setdefault('data', {})
+    config['data'].setdefault('path', 'dataset/processed/train.txt')
     # --- Configuration Overrides (for this simple script) ---
     # In a more robust setup, these would be handled by a proper config system
     # or command-line arguments.

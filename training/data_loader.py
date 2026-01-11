@@ -1,4 +1,5 @@
 import torch
+from typing import Tuple, List, Callable
 from typing import Tuple, List, Dict, Callable
 
 class DataManager:
@@ -10,6 +11,7 @@ class DataManager:
 
         Args:
             data_path (str): Path to the training data file.
+            block_size (int): The context size for predictions.
             block_size (int): The context length for predictions.
             batch_size (int): The number of independent sequences to process in parallel.
             device (str): The device to move tensors to ('cpu' or 'cuda').
@@ -22,6 +24,11 @@ class DataManager:
 
     def _load_data(self) -> Tuple[torch.Tensor, int, Callable[[str], List[int]], Callable[[List[int]], str]]:
         """
+        Reads the training data, creates a char-level tokenizer, and returns the encoded data.
+
+        Returns:
+            Tuple[torch.Tensor, int, Callable, Callable]: A tuple containing the encoded data tensor,
+                                                          vocabulary size, encoder function, and decoder function.
         Reads the training data and creates a simple char-level tokenizer.
 
         Returns:
@@ -37,6 +44,11 @@ class DataManager:
         chars = sorted(list(set(text)))
         vocab_size = len(chars)
 
+        stoi = {ch: i for i, ch in enumerate(chars)}
+        itos = {i: ch for i, ch in enumerate(chars)}
+
+        encode = lambda s: [stoi[c] for c in s]
+        decode = lambda l: ''.join([itos[i] for i in l])
         stoi: Dict[str, int] = {ch: i for i, ch in enumerate(chars)}
         itos: Dict[int, str] = {i: ch for i, ch in enumerate(chars)}
 
@@ -53,7 +65,7 @@ class DataManager:
         Returns:
             Tuple[torch.Tensor, torch.Tensor]: A tuple containing the input and target tensors.
 from typing import Tuple, List, Dict
-
+"""
 class DataManager:
     """Manages data loading, tokenization, and batching for training.
 

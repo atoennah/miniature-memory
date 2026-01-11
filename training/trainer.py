@@ -1,11 +1,24 @@
 import os
 import torch
+from .model import GPT, GPTConfig
+from .data_loader import DataManager
+from typing import Dict
+
+class Trainer:
+    """Manages the model training loop."""
+
+    def __init__(self, config: Dict, data_manager: DataManager):
+        """
+        Initializes the Trainer.
+
+        Args:
+            config (Dict): The configuration dictionary.
 import torch.nn as nn
 from typing import Dict, Any
 
 from .model import GPT, GPTConfig
 from .data_loader import DataManager
-
+"""
 class Trainer:
     """Manages the model training process."""
 
@@ -34,6 +47,7 @@ class Trainer:
         self.config = config
         self.data_manager = data_manager
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
         print(f"Using device: {self.device}")
 
         self.model = self._build_model()
@@ -59,6 +73,18 @@ class Trainer:
             n_embd=self.config['model']['n_embd'],
             dropout=self.config['model']['dropout']
         )
+        self.model = GPT(gpt_config).to(self.device)
+        self.optimizer = self._configure_optimizer()
+
+    def _configure_optimizer(self) -> torch.optim.Optimizer:
+        """Configures the AdamW optimizer."""
+        return torch.optim.AdamW(
+            self.model.parameters(),
+            lr=float(self.config['training']['learning_rate'])
+        )
+
+    def train(self):
+        """Runs the main training loop."""
         model = GPT(gpt_config).to(self.device)
         return model
 
@@ -114,6 +140,7 @@ class Trainer:
         self._save_checkpoint()
 
     def _save_checkpoint(self):
+        """Saves the model checkpoint."""
         """
         Saves the model state dictionary to a checkpoint file.
         """
