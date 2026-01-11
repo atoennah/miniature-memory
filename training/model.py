@@ -67,6 +67,44 @@ class MultiHeadAttention(nn.Module):
         self.n_embd = config.n_embd
         self.dropout = config.dropout
 
+        # Key, query, value projections for all heads, but in a batch
+        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=False)
+        # Output projection
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd)
+        # Special scaling for residual connections, per NanoGPT
+        self.c_proj.NANOGPT_SCALE_INIT = 1
+        # Regularization
+        self.resid_dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x):
+        B, T, C = x.shape # batch size, sequence length, embedding dimensionality (n_embd)
+
+        # Calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+
+        # Causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        # Flash attention is implemented in PyTorch 2.0
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout, is_causal=True)
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+
+        # Output projection
+        y = self.resid_dropout(self.c_proj(y))
+        return y
+
+class FeedForward(nn.Module):
+    """A simple linear layer followed by a non-linearity"""
+
+    def __init__(self, config: GPTConfig):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(config.n_embd, 4 * config.n_embd),
+            nn.GELU(),
+            nn.Linear(4 * config.n_embd, config.n_embd),
+            nn.Dropout(config.dropout),
+        )
         # A single linear layer projects the input into Q, K, and V for all heads at once.
         # This is more efficient than creating separate linear layers for each head.
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=False)
