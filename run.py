@@ -152,6 +152,7 @@ def main():
         import yaml
         from training.train import run_training
 
+        from training.train import run_training
         try:
             with open(args.config, 'r') as f:
                 config = yaml.safe_load(f)
