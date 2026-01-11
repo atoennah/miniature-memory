@@ -857,6 +857,7 @@ class CausalSelfAttention(nn.Module):
         self.dropout = config.dropout
         self.n_head = config.n_head
         self.n_embd = config.n_embd
+        self.dropout = config.dropout # ⚡ Bolt: Store dropout rate for fused attention.
 
         # [INJECTOR NOTE: THE CAUSAL MASK]
         # The causal mask (or lower-triangular mask) is essential for autoregressive models.
@@ -919,6 +920,11 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
 
+        # ⚡ Bolt: Use fused scaled_dot_product_attention for efficiency.
+        # This single function replaces the manual implementation of matrix multiplication,
+        # scaling, masking, softmax, and dropout. It leverages optimized kernels like
+        # Flash Attention under the hood, leading to significant speedups and lower memory usage.
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
         # ⚡ Bolt: Fused self-attention for performance.
         # Replaced manual masking and softmax with a single, optimized kernel.
         # This reduces memory I/O and leverages hardware-specific acceleration.
