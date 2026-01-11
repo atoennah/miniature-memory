@@ -84,6 +84,7 @@ def main():
     print("Starting the miniature-memory pipeline...\n")
 
     if not args.skip_validation:
+        from scripts.validate_raw import run_validation
         # Defer import to improve startup speed when skipping pipeline stages.
         from scripts.validate_raw import run_validation
         try:
@@ -96,6 +97,7 @@ def main():
         print("--- Validation completed successfully ---\n")
 
     if not args.skip_cleaning:
+        from scripts.clean_dataset import run_cleaning
         # Defer import to improve startup speed when skipping pipeline stages.
         from scripts.clean_dataset import run_cleaning
         try:
@@ -108,6 +110,7 @@ def main():
         print("--- Cleaning completed successfully ---\n")
 
     if not args.skip_preparation:
+        from scripts.prepare_data import run_preparation
         # Defer import to improve startup speed when skipping pipeline stages.
         from scripts.prepare_data import run_preparation
         try:
@@ -120,6 +123,7 @@ def main():
         print("--- Preparation completed successfully ---\n")
 
     if not args.skip_training:
+        from training.train import run_training
         # Defer import to improve startup speed when skipping pipeline stages.
         from training.train import run_training
         try:
