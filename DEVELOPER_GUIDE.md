@@ -162,6 +162,34 @@ The repository is organized into distinct modules for data handling, scripting, 
 │   ├── raw/          # Raw extracted text (one file per content)
 │   ├── cleaned/      # Cleaned text (derived)
 │   └── processed/    # Tokenized / training-ready data
+│   └── extract/      # read-mode text extraction
+│
+├── scripts/
+│   ├── validate_raw.py
+│   ├── clean_dataset.py
+│   ├── prepare_data.py
+│   └── stats.py
+│
+├── training/
+│   ├── model.py      # Core GPT model definition
+│   ├── train.py      # Training loop
+│   └── configs/      # YAML configuration for training runs
+│
+├── .jules/
+│   ├── AGENTS.md     # Definitions of agent personas
+│   └── BOLT_JOURNAL.md # Log for experimental findings
+│
+├── run.py            # Main pipeline orchestrator
+│   ├── model.py
+│   ├── train.py
+│   └── configs/
+│
+├── run.py
+├── setup.sh
+├── NanoGPT_Training.ipynb
+└── README.md
+```
+
 # Developer Guide
 
 This guide provides a technical overview of the miniature-memory project, including repository structure, setup, and the training workflow.
@@ -215,33 +243,6 @@ To set up the environment and install all necessary dependencies, run the `setup
 The entire data processing and training pipeline can be run using the unified `run.py` script.
 
 **To run the entire pipeline:**
-│   └── extract/      # read-mode text extraction
-│
-├── scripts/
-│   ├── validate_raw.py
-│   ├── clean_dataset.py
-│   ├── prepare_data.py
-│   └── stats.py
-│
-├── training/
-│   ├── model.py      # Core GPT model definition
-│   ├── train.py      # Training loop
-│   └── configs/      # YAML configuration for training runs
-│
-├── .jules/
-│   ├── AGENTS.md     # Definitions of agent personas
-│   └── BOLT_JOURNAL.md # Log for experimental findings
-│
-├── run.py            # Main pipeline orchestrator
-│   ├── model.py
-│   ├── train.py
-│   └── configs/
-│
-├── run.py
-├── setup.sh
-├── NanoGPT_Training.ipynb
-└── README.md
-```
 
 ## Setup
 
