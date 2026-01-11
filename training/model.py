@@ -950,6 +950,7 @@ class CausalSelfAttention(nn.Module):
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd)
         # output projection
         self.c_proj = nn.Linear(config.n_embd, config.n_embd)
+        # regularization
         self.resid_dropout = nn.Dropout(config.dropout)
         self.n_head = config.n_head
         self.n_embd = config.n_embd
@@ -960,6 +961,7 @@ class CausalSelfAttention(nn.Module):
         self.dropout = config.dropout
         self.n_head = config.n_head
         self.n_embd = config.n_embd
+        # Note: self.attn_dropout is no longer needed as dropout is handled by F.scaled_dot_product_attention
         # Flash Attention-style dropout
         self.dropout = config.dropout
         self.dropout = config.dropout # ⚡ Bolt: Store dropout rate for fused attention.
@@ -978,6 +980,23 @@ class CausalSelfAttention(nn.Module):
     # leading to significant speedups and reduced memory usage by avoiding the materialization
     # of the large (B, n_head, T, T) attention matrix.
     def forward(self, x):
+        B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
+
+        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+
+        # Causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        # This is the core optimization: using the fused Flash Attention kernel.
+        # This avoids materializing the large attention matrix and instead computes the attention
+        # scores and applies them in a single, memory-efficient operation.
+        dropout_p = self.resid_dropout.p if self.training else 0
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=dropout_p, is_causal=True)
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+
+        # output projection
         B, T, C = x.size() # Batch size, sequence length, embedding dimensionality (n_embd)
 
         # Calculate query, key, values for all heads in batch and move head forward to be the batch dim
