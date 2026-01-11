@@ -1,6 +1,30 @@
 import argparse
 import sys
 
+from scripts.validate_raw import run_validation
+from scripts.clean_dataset import run_cleaning
+from scripts.prepare_data import run_preparation
+from training.train import main as run_training
+
+def check_dependencies():
+    """Checks if all the required packages are installed."""
+    with open('requirements.txt', 'r') as f:
+        requirements = [line.strip() for line in f if line.strip() and not line.startswith('-e')]
+
+    missing_packages = []
+    for package in requirements:
+        package_name = package.split('==')[0]
+        try:
+            version(package_name)
+        except PackageNotFoundError:
+            missing_packages.append(package_name)
+
+    if missing_packages:
+        print("The following required packages are not installed:", file=sys.stderr)
+        for package in missing_packages:
+            print(f" - {package}", file=sys.stderr)
+        print("\nPlease install them by running: pip install -r requirements.txt", file=sys.stderr)
+        sys.exit(1)
 def _handle_import_error(module_name):
     """Prints a user-friendly error message and exits."""
     print(f"Error: The required module '{module_name}' is not installed.", file=sys.stderr)

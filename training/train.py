@@ -1,7 +1,7 @@
-import os
-import torch
 import argparse
+import torch
 import yaml
+from typing import Dict, Any
 import time
 from model import GPT, GPTConfig
 
@@ -14,46 +14,29 @@ def get_data(data_path):
     chars = sorted(list(set(text)))
     vocab_size = len(chars)
 
-    stoi = {ch: i for i, ch in enumerate(chars)}
-    itos = {i: ch for i, ch in enumerate(chars)}
+from .data_loader import DataManager
+from .trainer import Trainer
 
-    encode = lambda s: [stoi[c] for c in s]
-    decode = lambda l: ''.join([itos[i] for i in l])
+def main(config: Dict[str, Any]) -> None:
+    """
+    Main function to orchestrate the training pipeline.
 
-    data = torch.tensor(encode(text), dtype=torch.long)
-    return data, vocab_size, encode, decode
-
-def get_batch(data, block_size, batch_size, device):
-    """Generates a small batch of data of inputs x and targets y."""
-    ix = torch.randint(len(data) - block_size, (batch_size,))
-    x = torch.stack([data[i:i+block_size] for i in ix])
-    y = torch.stack([data[i+1:i+block_size+1] for i in ix])
-    x, y = x.to(device), y.to(device)
-    return x, y
-
-# --- Main Training Loop ---
-def run_training(config):
-    # --- Setup ---
+    Args:
+        config (Dict[str, Any]): The configuration dictionary.
+    """
+    # Determine the computing device
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"Using device: {device}")
 
-    # Create output directory
-    os.makedirs(config['training']['output_dir'], exist_ok=True)
-
-    # --- Data ---
-    data, vocab_size, _, _ = get_data(config['data']['path'])
-
-    # --- Model ---
-    gpt_config = GPTConfig(
-        vocab_size=vocab_size,
+    # Initialize the DataManager
+    data_manager = DataManager(
+        data_path=config['data']['path'],
         block_size=config['model']['block_size'],
-        n_layer=config['model']['n_layer'],
-        n_head=config['model']['n_head'],
-        n_embd=config['model']['n_embd'],
-        dropout=config['model']['dropout']
+        batch_size=config['training']['batch_size'],
+        device=device
     )
-    model = GPT(gpt_config).to(device)
 
+    # Initialize the Trainer
+    trainer = Trainer(config, data_manager)
     # --- Training ---
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -89,6 +72,8 @@ def run_training(config):
     torch.save(model.state_dict(), checkpoint_path)
     print(f"\nModel checkpoint saved to: {checkpoint_path}")
 
+    # Run the training
+    trainer.run()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Train a NanoGPT model.")
@@ -103,10 +88,15 @@ if __name__ == '__main__':
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
 
-    # Add some hardcoded values not in the yaml for this simple loop
-    config.setdefault('training', {})['max_steps'] = 100
-    config.setdefault('training', {})['eval_interval'] = 10
-    config.setdefault('training', {})['output_dir'] = 'training/checkpoints'
-    config.setdefault('data', {})['path'] = 'dataset/processed/train.txt'
+    # --- Configuration Defaults ---
+    # These values are set to ensure that even a minimal config file will run,
+    # especially for standalone execution of this script.
+    config.setdefault('training', {})
+    config['training'].setdefault('max_steps', 100)
+    config['training'].setdefault('eval_interval', 10)
+    config['training'].setdefault('output_dir', 'training/checkpoints')
 
-    run_training(config)
+    config.setdefault('data', {})
+    config['data'].setdefault('path', 'dataset/processed/train.txt')
+
+    main(config)
