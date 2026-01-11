@@ -62,7 +62,12 @@ def main(config):
 
     # Generate text
     with torch.no_grad():
-        y = model.generate(x, max_new_tokens=config['generate']['max_new_tokens'])
+        y = model.generate(
+            x,
+            max_new_tokens=config['generate']['max_new_tokens'],
+            temperature=config['inference']['temperature'],
+            top_p=config['inference']['top_p']
+        )
         output_text = decode(y[0].tolist())
 
     mem_after = process.memory_info().rss / (1024 * 1024) # in MB
