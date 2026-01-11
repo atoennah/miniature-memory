@@ -32,7 +32,7 @@ def clean_content(content):
 
     return cleaned
 
-def main(raw_dir, cleaned_dir):
+def run_cleaning(raw_dir, cleaned_dir):
     """
     Walks the raw data directory, cleans files, and saves them to the cleaned directory.
     """
@@ -90,4 +90,4 @@ if __name__ == "__main__":
         help="The directory where cleaned text files will be saved."
     )
     args = parser.parse_args()
-    main(args.raw_dir, args.cleaned_dir)
+    run_cleaning(args.raw_dir, args.cleaned_dir)
