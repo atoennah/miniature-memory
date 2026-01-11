@@ -1,5 +1,7 @@
 import argparse
 import sys
+from importlib.metadata import PackageNotFoundError, version
+
 
 from scripts.validate_raw import run_validation
 from scripts.clean_dataset import run_cleaning
@@ -8,12 +10,18 @@ from training.train import main as run_training
 
 def check_dependencies():
     """Checks if all the required packages are installed."""
-    with open('requirements.txt', 'r') as f:
-        requirements = [line.strip() for line in f if line.strip() and not line.startswith('-e')]
+    try:
+        with open('requirements.txt', 'r') as f:
+            requirements = [line.strip() for line in f if line.strip() and not line.startswith('-e')]
+    except FileNotFoundError:
+        print("Warning: requirements.txt not found. Skipping dependency check.", file=sys.stderr)
+        return
 
     missing_packages = []
     for package in requirements:
-        package_name = package.split('==')[0]
+        package_name = package.split('==')[0].strip()
+        if not package_name:
+            continue
         try:
             version(package_name)
         except PackageNotFoundError:
@@ -33,6 +41,15 @@ def _handle_import_error(module_name):
     sys.exit(1)
 
 def main():
+    """
+    Main function to run the miniature-memory data and training pipeline.
+
+    This script orchestrates the validation, cleaning, preparation, and training
+    stages. Each stage can be skipped via command-line arguments, and imports
+    are deferred to reduce memory overhead and improve startup time.
+    """
+    check_dependencies()
+
     parser = argparse.ArgumentParser(
         description="A unified script to run the miniature-memory pipeline."
     )
@@ -74,6 +91,7 @@ def main():
         except ImportError:
             _handle_import_error("scripts.validate_raw")
         print("--- Running Validation ---")
+        from scripts.validate_raw import run_validation
         run_validation("dataset/raw")
         print("--- Validation completed successfully ---\n")
 
@@ -85,6 +103,7 @@ def main():
         except ImportError:
             _handle_import_error("scripts.clean_dataset")
         print("--- Running Cleaning ---")
+        from scripts.clean_dataset import run_cleaning
         run_cleaning("dataset/raw", "dataset/cleaned")
         print("--- Cleaning completed successfully ---\n")
 
@@ -96,6 +115,7 @@ def main():
         except ImportError:
             _handle_import_error("scripts.prepare_data")
         print("--- Running Preparation ---")
+        from scripts.prepare_data import run_preparation
         run_preparation("dataset/cleaned", "dataset/processed")
         print("--- Preparation completed successfully ---\n")
 
@@ -113,10 +133,14 @@ def main():
                 _handle_import_error("training.train")
 
         print("--- Running Training ---")
+        import yaml
+        from training.train import run_training
+
         try:
             with open(args.config, 'r') as f:
                 config = yaml.safe_load(f)
         except FileNotFoundError:
+            print(f"Error: Config file not found at {args.config}", file=sys.stderr)
             print(f"Error: Configuration file not found at '{args.config}'", file=sys.stderr)
             sys.exit(1)
 

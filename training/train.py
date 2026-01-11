@@ -1,4 +1,10 @@
 import os
+import argparse
+import sys
+import yaml
+from typing import Tuple, List, Dict, Any, Callable
+
+import torch
 import time
 import torch
 import argparse
@@ -17,6 +23,17 @@ from model import GPT, GPTConfig
 
 def get_data(data_path: str) -> Tuple[torch.Tensor, int, Callable[[str], List[int]], Callable[[List[int]], str]]:
     """
+    Reads training data, creates a character-level tokenizer, and tensorizes the data.
+
+    Args:
+        data_path (str): The full path to the training text file.
+
+    Returns:
+        A tuple containing:
+        - torch.Tensor: The entire dataset as a single tensor of token indices.
+        - int: The vocabulary size.
+        - Callable[[str], List[int]]: An 'encode' function that maps a string to a list of integers.
+        - Callable[[List[int]], str]]: A 'decode' function that maps a list of integers back to a string.
     Reads the training data, creates a simple char-level tokenizer, and returns
     the encoded data and tokenizer functions.
 
@@ -52,6 +69,9 @@ def get_data(data_path: str) -> Tuple[torch.Tensor, int, Any, Any]:
     # Simple character-level tokenizer
     stoi = {ch: i for i, ch in enumerate(chars)}
     itos = {i: ch for i, ch in enumerate(chars)}
+
+    encode: Callable[[str], List[int]] = lambda s: [stoi[c] for c in s]
+    decode: Callable[[List[int]], str] = lambda l: ''.join([itos[i] for i in l])
     encode = lambda s: [stoi[c] for c in s]
     decode = lambda l: ''.join([itos[i] for i in l])
 from .data_loader import DataManager
@@ -71,6 +91,20 @@ def get_batch(data: torch.Tensor, block_size: int, batch_size: int, device: str)
     """
     Generates a small batch of data of inputs x and targets y.
 
+def get_batch(data: torch.Tensor, block_size: int, batch_size: int, device: str) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Generates a random batch of input-target pairs from the dataset.
+
+    Args:
+        data (torch.Tensor): The full training dataset as a tensor.
+        block_size (int): The context length for predictions.
+        batch_size (int): The number of independent sequences in a batch.
+        device (str): The device to move the tensors to ('cpu' or 'cuda').
+
+    Returns:
+        A tuple containing:
+        - torch.Tensor: A batch of input sequences (shape: [batch_size, block_size]).
+        - torch.Tensor: A batch of target sequences (shape: [batch_size, block_size]).
     Args:
         data (torch.Tensor): The full training data.
         block_size (int): The context length for predictions.
@@ -94,6 +128,29 @@ def get_batch(data: torch.Tensor, block_size: int, batch_size: int, device: str)
     x, y = x.to(device), y.to(device)
     return x, y
 
+# --- Main Training Loop ---
+
+def run_training(config: Dict[str, Any]) -> None:
+    """
+    Executes the main training loop for the GPT model.
+
+    This function orchestrates the entire training process, including:
+    - Setting up the device (CPU/GPU).
+    - Loading and preparing the data.
+    - Initializing the model and optimizer.
+    - Running the training steps.
+    - Saving the final model checkpoint.
+
+    Args:
+        config (Dict[str, Any]): A dictionary containing the full training configuration,
+                                 typically loaded from a YAML file.
+    """
+    # --- Setup ---
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"Using device: {device}")
+
+    output_dir = config['training']['output_dir']
+    os.makedirs(output_dir, exist_ok=True)
 
 # --- Trainer Class ---
 
@@ -179,6 +236,15 @@ class Trainer:
 
         print("Training finished.")
 
+    # --- Model ---
+    model_config = config['model']
+    gpt_config = GPTConfig(
+        vocab_size=vocab_size,
+        block_size=model_config['block_size'],
+        n_layer=model_config['n_layer'],
+        n_head=model_config['n_head'],
+        n_embd=model_config['n_embd'],
+        dropout=model_config['dropout']
     def save_checkpoint(self) -> None:
         """
         Saves the model's state dictionary to a checkpoint file.
@@ -265,12 +331,14 @@ def main(config: Dict[str, Any]) -> None:
     # Initialize the Trainer
     trainer = Trainer(config, data_manager)
     # --- Training ---
+    training_config = config['training']
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=float(config['training']['learning_rate']) # Explicitly cast to float
+        lr=float(training_config['learning_rate'])
     )
 
     print("\nStarting training...")
+    for step in range(training_config['max_steps']):
     t0 = time.time()
     start_time = time.time()
     for step in range(config['training']['max_steps']):
@@ -278,10 +346,12 @@ def main(config: Dict[str, Any]) -> None:
         xb, yb = get_batch(
             data,
             gpt_config.block_size,
-            config['training']['batch_size'],
+            training_config['batch_size'],
             device
         )
 
+        _, loss = model(xb, yb)
+        optimizer.zero_grad(set_to_none=True)
     def _run_step(self, xb: torch.Tensor, yb: torch.Tensor, step: int) -> None:
         """Performs a single training step."""
         logits, loss = self.model(xb, yb)
@@ -289,6 +359,8 @@ def main(config: Dict[str, Any]) -> None:
         loss.backward()
         self.optimizer.step()
 
+        if step % training_config['eval_interval'] == 0:
+            print(f"Step {step:4d}/{training_config['max_steps']}: Loss: {loss.item():.4f}")
         if step % self.config['training']['eval_interval'] == 0:
             print(f"Step {step:4d}/{self.config['training']['max_steps']}: Loss: {loss.item():.4f}")
 
@@ -301,6 +373,18 @@ def main(config: Dict[str, Any]) -> None:
     duration = end_time - start_time
     print(f"Training finished in {duration:.2f} seconds.")
 
+    # --- Save Checkpoint ---
+    checkpoint_path = os.path.join(output_dir, 'model.pt')
+    torch.save(model.state_dict(), checkpoint_path)
+    print(f"\nModel checkpoint saved to: {checkpoint_path}")
+
+def main() -> None:
+    """
+    Provides a command-line interface for running the training script.
+
+    This function handles argument parsing, configuration loading, and applying
+    hardcoded defaults for a quick "micro-train" test run.
+    """
 def load_config(config_path: str) -> Dict[str, Any]:
     """Loads configuration from a YAML file and applies default values.
 
@@ -345,6 +429,27 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    try:
+        with open(args.config, 'r') as f:
+            config = yaml.safe_load(f)
+    except FileNotFoundError:
+        print(f"Error: Config file not found at {args.config}", file=sys.stderr)
+        sys.exit(1)
+
+    # For standalone execution, provide sensible defaults for a quick micro-train.
+    # These values are suitable for a quick test run.
+    training_defaults = {
+        'max_steps': 100,
+        'eval_interval': 10,
+        'output_dir': 'training/checkpoints'
+    }
+    config.setdefault('training', {}).update(training_defaults)
+    config.setdefault('data', {}).setdefault('path', 'dataset/processed/train.txt')
+
+    run_training(config)
+
+if __name__ == '__main__':
+    main()
     # Load the configuration file
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
