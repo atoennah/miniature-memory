@@ -1,7 +1,0 @@
-This is a sample story.
-
-It has multiple paragraphs, and some   extra whitespace.
-
-Here is a line with some non-text characters: ###!@$%^&*()
-
-The story concludes here.

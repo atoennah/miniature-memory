@@ -1,59 +1,78 @@
 import json
 import os
 import tempfile
-from scraper.process import fetch_html, extract_text
+from playwright.sync_api import sync_playwright
+from scraper.process import extract_text
 from scraper.storage import save_raw_text
+from scraper.crawler import find_story_urls_heuristically
 
 def run_process(args):
-    """Runs the fetch, extract, and save pipeline using an atomic write pattern."""
+    """
+    Runs the heuristic crawl, fetch, extract, and save pipeline.
+    This function treats URLs from the manifest as index pages, heuristically
+    finds potential story links, and then processes them.
+    """
     manifest_file = "dataset/metadata/urls.jsonl"
     if not os.path.exists(manifest_file):
         print("URL manifest file not found. Run 'search' first.")
         return
 
-    # Use a temporary file to prevent data corruption
     temp_fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(manifest_file))
 
-    try:
-        with os.fdopen(temp_fd, 'w', encoding="utf-8") as temp_f:
-            with open(manifest_file, "r", encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        url_data = json.loads(line)
-                        if url_data.get("status") == "new":
-                            print(f"Processing URL: {url_data['url']}")
-                            html = fetch_html(url_data['url'])
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
 
-                            if html:
-                                text = extract_text(html)
-                                filepath = save_raw_text(url_data['url'], text)
-                                if filepath:
-                                    print(f"  -> Saved to {filepath}")
-                                    url_data["status"] = "fetched"
-                                else:
-                                    print("  -> Rejected (empty content or save error)")
+        try:
+            with os.fdopen(temp_fd, 'w', encoding="utf-8") as temp_f:
+                with open(manifest_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        try:
+                            url_data = json.loads(line)
+                            if url_data.get("status") == "new":
+                                index_url = url_data['url']
+
+                                print(f"Processing index URL: {index_url}")
+                                page.goto(index_url, timeout=60000)
+                                page.wait_for_timeout(5000) # Wait for JS to settle
+
+                                # --- Debug Snapshot ---
+                                page.screenshot(path="debug_view.png")
+                                with open("debug_dom.html", "w", encoding="utf-8") as f:
+                                    f.write(page.content())
+                                print("  -> Saved debug snapshot and DOM dump.")
+                                # --- End Debug ---
+
+                                story_urls = find_story_urls_heuristically(page, index_url)
+
+                                if not story_urls:
                                     url_data["status"] = "rejected"
-                            else:
-                                print("  -> Rejected (fetch failed)")
-                                url_data["status"] = "rejected"
+                                else:
+                                    for story_url in story_urls:
+                                        try:
+                                            print(f"  -> Processing story: {story_url}")
+                                            page.goto(story_url, timeout=60000)
+                                            html = page.content()
+                                            text = extract_text(html)
+                                            save_raw_text(story_url, text)
+                                        except Exception as e:
+                                            print(f"    -> Failed to process {story_url}: {e}")
+                                            continue
 
-                        # Write the (potentially updated) line to the temporary file
-                        temp_f.write(json.dumps(url_data) + "\n")
+                                    url_data["status"] = "crawled"
 
-                    except json.JSONDecodeError:
-                        # If a line is malformed, preserve it in the new file
-                        print(f"Skipping malformed line: {line.strip()}")
-                        temp_f.write(line)
-                        continue
+                            temp_f.write(json.dumps(url_data) + "\n")
 
-        # Atomically replace the original file with the temporary one
-        os.replace(temp_path, manifest_file)
+                        except json.JSONDecodeError:
+                            temp_f.write(line)
+                            continue
 
-    except Exception as e:
-        # Ensure the temporary file is cleaned up on error
-        print(f"An error occurred during processing: {e}")
-        os.remove(temp_path)
-        # Re-raise the exception to make the failure clear
-        raise
+            os.replace(temp_path, manifest_file)
+
+        except Exception as e:
+            os.remove(temp_path)
+            raise
+        finally:
+            browser.close()
 
     print("\nProcessing complete.")

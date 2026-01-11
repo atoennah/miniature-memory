@@ -1,30 +1,38 @@
-import requests
+from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
+import trafilatura
 
 def fetch_html(url: str) -> str | None:
     """
-    Fetches the HTML content for a given URL.
+    Fetches the HTML content for a given URL using a headless browser.
 
     Args:
         url (str): The URL to fetch.
 
     Returns:
-        str | None: The HTML content as a string, or None if the request fails.
+        str | None: The HTML content as a string, or None if an error occurs.
     """
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
+
     try:
-        response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()
-        return response.text
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching {url}: {e}")
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            # Set a longer timeout (60 seconds) for pages that are slow to load
+            page.goto(url, timeout=60000)
+            # Wait for the network to be idle, indicating the page has likely loaded
+            page.wait_for_load_state('networkidle')
+            html = page.content()
+            browser.close()
+            return html
+    except Exception as e:
+        print(f"Error fetching {url} with Playwright: {e}")
         return None
 
 def extract_text(html: str) -> str:
     """
-    Extracts readable story text from HTML, focusing on paragraph tags.
+    Extracts the main story text from HTML using trafilatura.
+    This is much more effective at removing boilerplate than a simple
+    paragraph-tag search.
 
     Args:
         html (str): The HTML content of the page.
@@ -35,13 +43,6 @@ def extract_text(html: str) -> str:
     if not html:
         return ""
 
-    soup = BeautifulSoup(html, 'html.parser')
-
-    # A simple but effective strategy for story text is to concatenate the text
-    # from all paragraph (<p>) tags. This tends to filter out most UI noise.
-    paragraphs = soup.find_all('p')
-
-    # Join the text from all paragraphs with a double newline for separation.
-    story_text = "\n\n".join(p.get_text().strip() for p in paragraphs)
-
-    return story_text
+    # Trafilatura is a library specifically designed to extract the main
+    # text content from a webpage, filtering out menus, ads, and footers.
+    return trafilatura.extract(html)
