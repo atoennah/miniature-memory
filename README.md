@@ -14,6 +14,11 @@ A minimal, memory-aware dataset and training pipeline for small GPT-style models
 - **Automation:** The entire data pipeline is designed to be automated and reproducible.
 - **Adult Narrative:** The model is trained exclusively on adult stories to generate high-quality erotic fiction.
 
+## Developer Documentation
+
+This README provides a high-level overview. For a detailed technical explanation of the data pipeline, training process, and project philosophy, please see the **[Developer Guide](DEVELOPER_GUIDE.md)**.
+
+## Target Model
 ## Getting Started
 
 For detailed technical information, including setup, repository structure, and training workflows, please see the **[DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md)**.
