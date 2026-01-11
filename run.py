@@ -14,6 +14,7 @@ from importlib.metadata import PackageNotFoundError, version
 from scripts.validate_raw import run_validation
 from scripts.clean_dataset import run_cleaning
 from scripts.prepare_data import run_preparation
+from training.train import main as train_main
 from training.train import main as run_training
 
 def check_dependencies():
@@ -152,6 +153,16 @@ def main():
         import yaml
         from training.train import run_training
 
+        # Set default values for the training config
+        config.setdefault('training', {})
+        config['training'].setdefault('max_steps', 100)
+        config['training'].setdefault('eval_interval', 10)
+        config['training'].setdefault('output_dir', 'training/checkpoints')
+
+        config.setdefault('data', {})
+        config['data'].setdefault('path', 'dataset/processed/train.txt')
+
+        train_main(config)
         from training.train import run_training
         try:
             with open(args.config, 'r') as f:

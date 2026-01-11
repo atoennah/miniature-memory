@@ -1,4 +1,11 @@
 """
+Handles loading and preparing the training data.
+"""
+import torch
+from typing import Tuple, List, Dict, Callable
+
+class DataManager:
+    """Manages the dataset, including tokenization and batch generation."""
 Handles loading and preparing the training data for the GPT model.
 """
 import torch
@@ -51,6 +58,24 @@ class DataManager:
         self.block_size = block_size
         self.batch_size = batch_size
         self.device = device
+
+        self.text: str = self._read_data()
+        self.chars: List[str] = sorted(list(set(self.text)))
+        self.vocab_size: int = len(self.chars)
+
+        self.stoi: Dict[str, int] = {ch: i for i, ch in enumerate(self.chars)}
+        self.itos: Dict[int, str] = {i: ch for i, ch in enumerate(self.chars)}
+
+        self.encode: Callable[[str], List[int]] = lambda s: [self.stoi[c] for c in s]
+        self.decode: Callable[[List[int]], str] = lambda l: ''.join([self.itos[i] for i in l])
+
+        self.data: torch.Tensor = torch.tensor(self.encode(self.text), dtype=torch.long)
+
+    def _read_data(self) -> str:
+        """Reads the training data from the specified file."""
+        with open(self.data_path, 'r', encoding='utf-8') as f:
+            return f.read()
+
         self.data, self.vocab_size, self.encode, self.decode = self._load_and_tokenize()
 
     def _load_and_tokenize(self):
@@ -104,6 +129,7 @@ class DataManager:
         Generates a small batch of data of inputs x and targets y.
 
         Returns:
+            A tuple containing the input and target tensors.
             Tuple[torch.Tensor, torch.Tensor]: A tuple containing the input and target tensors.
 from typing import Tuple, List, Dict
 """

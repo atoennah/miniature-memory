@@ -1,4 +1,6 @@
 """
+Main entry point for training the GPT model.
+"""
 Main script to run the GPT model training process.
 
 This script acts as the orchestrator, bringing together the data manager,
@@ -29,6 +31,17 @@ import torch
 import argparse
 import torch
 import yaml
+
+from .model import GPT, GPTConfig
+from .data_loader import DataManager
+from .trainer import Trainer
+
+def main(config: dict):
+    """
+    Orchestrates the training process from configuration.
+
+    Args:
+        config (dict): A dictionary containing the training configuration.
 import torch
 
 from .data_loader import DataManager
@@ -412,6 +425,23 @@ def main(config: Dict[str, Any]) -> None:
         lr=float(config['training']['learning_rate'])
     )
 
+    # --- Optimizer ---
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=float(config['training']['learning_rate'])
+    )
+
+    # --- Trainer ---
+    trainer = Trainer(
+        model=model,
+        optimizer=optimizer,
+        data_manager=data_manager,
+        device=device,
+        max_steps=config['training']['max_steps'],
+        eval_interval=config['training']['eval_interval'],
+        output_dir=config['training']['output_dir']
+    )
+    trainer.train()
     # --- Trainer ---
     trainer = Trainer(config, model, optimizer, data_manager)
     trainer.train()
