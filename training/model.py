@@ -675,6 +675,7 @@ class CausalSelfAttention(nn.Module):
         self.dropout = config.dropout
         self.n_head = config.n_head
         self.n_embd = config.n_embd
+        self.dropout = config.dropout
 
         # Flash Attention-specific dropout
         self.dropout = config.dropout
@@ -701,6 +702,10 @@ class CausalSelfAttention(nn.Module):
         # The output is then split into three parts.
         q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
 
+        # Use PyTorch's optimized scaled_dot_product_attention
+        # This is a fused kernel that is much faster than the manual implementation.
+        dropout_p = self.dropout if self.training else 0
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=dropout_p, is_causal=True)
         # [BOLT] Replaced manual attention with scaled_dot_product_attention
         # This single function replaces the manual implementation of:
         #   - Calculating attention scores (q @ k.transpose)
