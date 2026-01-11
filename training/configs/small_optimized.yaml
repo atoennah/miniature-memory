@@ -1,4 +1,5 @@
 # NanoGPT-Lite Configuration (Small - Optimized)
+# NanoGPT-Lite Configuration (Small - Optimized by Bolt)
 
 model:
   n_embd: 256
@@ -13,6 +14,10 @@ tokenizer:
 training:
   batch_size: 16
   learning_rate: 5e-5
+  batch_size: 32
+  learning_rate: 5e-5  # Reduced LR for stability
+  batch_size: 64 # Optimized: Power of 2 for GPU efficiency
+  learning_rate: 5e-5 # Optimized: Lowered for stability on small dataset
   betas: [0.9, 0.95]
   epochs: 1
   output_dir: 'training/checkpoints'
