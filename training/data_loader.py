@@ -36,12 +36,24 @@ class DataManager:
         self._initialize_tokenizer_and_data(data_path)
 
     def _initialize_tokenizer_and_data(self, data_path: str) -> None:
-        """Reads data, creates a tokenizer, and prepares the memory-mapped dataset."""
-        # Read the entire text to build the vocabulary
-        with open(data_path, 'r', encoding='utf-8') as f:
-            text = f.read()
+        """
+        Reads data in chunks, creates a tokenizer, and prepares a memory-mapped
+        dataset without loading the entire file into RAM.
+        """
+        # --- Step 1: Build vocabulary by streaming the file ---
+        char_set = set()
+        total_size = 0
+        chunk_size = 10 * 1024 * 1024  # 10MB chunks for vocab building
 
-        chars = sorted(list(set(text)))
+        with open(data_path, 'r', encoding='utf-8') as f:
+            while True:
+                chunk = f.read(chunk_size)
+                if not chunk:
+                    break
+                char_set.update(chunk)
+                total_size += len(chunk)
+
+        chars = sorted(list(char_set))
         self.vocab_size = len(chars)
 
         stoi: Dict[str, int] = {ch: i for i, ch in enumerate(chars)}
@@ -50,28 +62,27 @@ class DataManager:
         self.encode: Callable[[str], List[int]] = lambda s: [stoi.get(c, 0) for c in s]
         self.decode: Callable[[List[int]], str] = lambda l: ''.join([itos.get(i, '') for i in l])
 
-        # Define the path for the memory-mapped file
+        # --- Step 2: Create memory-mapped file and tokenize in chunks ---
         tokenized_data_path = data_path + ".bin"
+        dtype = np.uint16  # Assuming vocab_size < 65535
 
-        # Create a memory-mapped file to store the tokenized data
-        # Using uint16 for tokens, assuming vocab_size < 65535
-        dtype = np.uint16
-        mm = np.memmap(tokenized_data_path, dtype=dtype, mode='w+', shape=(len(text),))
+        # Create the memory-mapped file with the correct total size
+        mm = np.memmap(tokenized_data_path, dtype=dtype, mode='w+', shape=(total_size,))
 
-        # Encode the text and write it to the memory-mapped file
-        # This is done in chunks to avoid loading the full encoded list into memory
-        chunk_size = 100 * 1024 * 1024  # 100MB chunks
-        i = 0
-        while i < len(text):
-            chunk = text[i:i+chunk_size]
-            encoded_chunk = self.encode(chunk)
-            mm[i:i+len(encoded_chunk)] = encoded_chunk
-            i += len(chunk)
+        # Process the file again, this time tokenizing and writing to the memmap
+        processed_size = 0
+        with open(data_path, 'r', encoding='utf-8') as f:
+            while True:
+                chunk = f.read(chunk_size)
+                if not chunk:
+                    break
+                encoded_chunk = self.encode(chunk)
+                mm[processed_size:processed_size + len(encoded_chunk)] = encoded_chunk
+                processed_size += len(encoded_chunk)
 
-
-        # Flush changes to disk and set the data attribute
+        # Flush changes to disk and set the data attribute for reading
         mm.flush()
-        self.data = np.memmap(tokenized_data_path, dtype=dtype, mode='r')
+        self.data = np.memmap(tokenized_data_path, dtype=dtype, mode='r', shape=(total_size,))
 
     def get_batch(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """
