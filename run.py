@@ -77,8 +77,12 @@ def main():
     )
     args, unknown = parser.parse_known_args()
 
-    # Pass the unknown arguments to the training script
-    sys.argv = [sys.argv[0]] + unknown
+    # ⚡ Bolt Fix: Rebuild argv for the training script to ensure the correct
+    # config is passed. The original script consumed --config but did not
+    # propagate it to the training sub-script.
+    train_argv = [sys.argv[0]] + unknown
+    train_argv.extend(['--config', args.config])
+    sys.argv = train_argv
 
     print("Starting the miniature-memory pipeline...\n")
 

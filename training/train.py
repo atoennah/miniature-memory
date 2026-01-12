@@ -29,8 +29,7 @@ def run_training(config: Dict[str, Any]) -> None:
     data_manager = DataManager(
         data_path=config['data']['path'],
         block_size=config['model']['block_size'],
-        batch_size=config['training']['batch_size'],
-        device='cuda' if torch.cuda.is_available() else 'cpu'
+        batch_size=config['training']['batch_size']
     )
 
     # Initialize and run the trainer
