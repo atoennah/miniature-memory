@@ -137,6 +137,10 @@ class GPT(nn.Module):
         # Weight tying: https://paperswithcode.com/method/weight-tying
         self.transformer.wte.weight = self.lm_head.weight
 
+        # Pre-compute positional indices and register as a buffer
+        pos = torch.arange(0, config.block_size, dtype=torch.long).unsqueeze(0)
+        self.register_buffer('pos', pos, persistent=False)
+
         # init all weights
         self.apply(self._init_weights)
         # apply special scaled init to the residual projections, per GPT-2 paper
@@ -157,7 +161,7 @@ class GPT(nn.Module):
         device = idx.device
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0)
+        pos = self.pos[:, :t]
 
         # Token and position embeddings
         tok_emb = self.transformer.wte(idx)
