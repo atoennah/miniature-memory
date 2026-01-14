@@ -4,7 +4,7 @@ import torch
 import yaml
 from training.model import GPT, GPTConfig
 
-def run_benchmark(config_path='training/configs/small.yaml'):
+def run_benchmark(config_path='training/configs/benchmark.yaml'):
     """
     Benchmarks the training throughput of the GPT model.
     """

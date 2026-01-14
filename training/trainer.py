@@ -61,10 +61,52 @@ class Trainer:
         learning_rate = float(self.config['training']['learning_rate'])
         return torch.optim.AdamW(self.model.parameters(), lr=learning_rate)
 
+    def _train_step(self, scaler: torch.cuda.amp.GradScaler, grad_clip: float) -> float:
+        """
+        Performs a single training step, including forward and backward passes.
+
+        This method encapsulates the logic for processing one batch of data,
+        calculating loss, performing backpropagation, and updating model weights.
+
+        Args:
+            scaler: The gradient scaler for mixed-precision training.
+            grad_clip: The value for gradient clipping.
+
+        Returns:
+            The loss value for the current training step.
+        """
+        xb, yb = self.data_manager.get_batch()
+
+        # Forward pass with Automatic Mixed Precision
+        with torch.amp.autocast(device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')):
+            _, loss = self.model(xb, yb)
+
+        # Backward pass
+        self.optimizer.zero_grad(set_to_none=True)
+        scaler.scale(loss).backward()
+
+        # Gradient Clipping to prevent explosions
+        if grad_clip > 0:
+            scaler.unscale_(self.optimizer)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip)
+
+        # Update weights
+        scaler.step(self.optimizer)
+        scaler.update()
+
+        return loss.item()
+
     def run(self) -> None:
-        """Executes the main training loop with mixed precision and gradient clipping."""
+        """
+        Executes the main training loop.
+
+        This method orchestrates the training process by iterating through
+        training steps, logging progress, and saving the final model checkpoint.
+        """
         print("\nStarting training...")
         start_time = time.time()
+
+        # Fetch training parameters from config
         max_steps = self.config['training']['max_steps']
         eval_interval = self.config['training']['eval_interval']
         grad_clip = self.config['training'].get('grad_clip', 1.0)
@@ -73,28 +115,11 @@ class Trainer:
         scaler = torch.cuda.amp.GradScaler(enabled=(self.device == 'cuda'))
 
         for step in range(max_steps):
-            xb, yb = self.data_manager.get_batch()
+            loss = self._train_step(scaler, grad_clip)
 
-            # Forward pass with Automatic Mixed Precision
-            with torch.amp.autocast(device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')):
-                logits, loss = self.model(xb, yb)
-
-            # Backward pass
-            self.optimizer.zero_grad(set_to_none=True)
-            scaler.scale(loss).backward()
-
-            # Gradient Clipping to prevent explosions
-            if grad_clip > 0:
-                scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip)
-
-            # Update weights
-            scaler.step(self.optimizer)
-            scaler.update()
-
-            # Log progress
+            # Log progress at specified intervals
             if step % eval_interval == 0 or step == max_steps - 1:
-                print(f"Step {step:4d}/{max_steps}: Loss: {loss.item():.4f}")
+                print(f"Step {step:4d}/{max_steps}: Loss: {loss:.4f}")
 
         end_time = time.time()
         duration = end_time - start_time
