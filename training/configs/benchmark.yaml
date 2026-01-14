@@ -1,0 +1,13 @@
+# Configuration for the benchmark.py script
+# This file uses a nested structure to be compatible with the benchmark script's parsing logic.
+
+model:
+  block_size: 256
+  n_layer: 6
+  n_head: 6
+  n_embd: 384
+  dropout: 0.2
+  bias: False
+
+training:
+  batch_size: 64
