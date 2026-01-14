@@ -64,6 +64,44 @@ class FeedForward(nn.Module):
         return self.net(x)
 
 class CausalSelfAttention(nn.Module):
+    # [INJECTOR: THE LOGOS OF CAUSAL SELF-ATTENTION]
+    #
+    # This module is the cornerstone of the Transformer. It allows the model to weigh the
+    # importance of different tokens in the input sequence when producing a representation
+    # for a given token. It is "causal" because it is masked to prevent attending to
+    # future tokens, which is essential for autoregressive language generation.
+    #
+    # The core mechanism is Scaled Dot-Product Attention. The formula is:
+    #   Attention(Q, K, V) = softmax( (Q @ K.T) / sqrt(d_k) ) @ V
+    #
+    # Breakdown of the components:
+    # 1. Q (Query): A projection of the current token's embedding. It's the "question"
+    #    this token is asking about other tokens.
+    # 2. K (Key): A projection of all tokens' embeddings in the sequence. It's the "label"
+    #    or "identifier" for each token. The dot product `Q @ K.T` measures the similarity
+    #    or "resonance" between the query token and all key tokens.
+    # 3. V (Value): A projection of all tokens' embeddings. It contains the actual information
+    #    that should be aggregated.
+    #
+    # The Scaling Factor `sqrt(d_k)`:
+    # `d_k` is the dimension of the key vectors. We divide by its square root to stabilize
+    # the gradients. For large `d_k`, the dot products `Q @ K.T` can grow very large in
+    # magnitude, pushing the softmax function into regions where its gradients are
+    # vanishingly small. This scaling prevents that saturation, ensuring stable training.
+    #
+    # Multi-Head Attention:
+    # Instead of one large attention calculation, we split the embedding dimension (`n_embd`)
+    # into `n_head` smaller "heads." Each head performs its own attention calculation in
+    # parallel on a subspace of the embeddings. This allows the model to jointly attend to
+    # information from different representational subspaces at different positions. The outputs
+    # of all heads are then concatenated and projected back to the original dimension.
+    #
+    # Causal Mask (`is_causal=True`):
+    # In the `F.scaled_dot_product_attention` call, this argument automatically applies a
+    # mask to the attention scores. The mask is an upper-triangular matrix of negative
+    # infinity, which, after the softmax, zeros out the scores for all tokens that appear
+    # *after* the current token in the sequence. This ensures the model is autoregressive.
+
     """A causal self-attention module with multi-head support."""
     def __init__(self, config: GPTConfig):
         super().__init__()
@@ -113,6 +151,22 @@ class Block(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass for a Transformer block."""
+        # [INJECTOR: RESIDUALS & PRE-LAYER NORMALIZATION]
+        #
+        # This is the standard "Pre-LN" Transformer block architecture, popularized by GPT-2.
+        # Each sub-layer (attention and MLP) has its own Layer Normalization applied *before*
+        # the transformation, and is wrapped in a residual connection.
+        #
+        # 1. Residual Connection (x + ...): This is the "shortcut" or "skip-connection"
+        #    that allows gradients to flow directly through the network. Without this,
+        #    training very deep transformers (>12 layers) becomes unstable due to the
+        #    vanishing gradient problem. It allows the model to learn modifications to the
+        #    identity function, rather than learning the entire transformation from scratch.
+        #
+        # 2. Pre-LN (self.ln_1(x)): Normalizing the input *before* the attention/MLP helps
+        #    stabilize the training dynamics, leading to smoother convergence and often
+        #    allowing for higher learning rates. The output of the sub-layer is then added
+        #    back to the *original*, un-normalized input `x`.
         x = x + self.attn(self.ln_1(x))
         x = x + self.mlp(self.ln_2(x))
         return x
@@ -134,12 +188,40 @@ class GPT(nn.Module):
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
-        # Weight tying: https://paperswithcode.com/method/weight-tying
+        # [INJECTOR: WEIGHT TYING]
+        #
+        # Weight tying is a technique where the token embedding matrix (`wte`) and the final
+        # output projection matrix (`lm_head`) share the same weights.
+        #
+        # Conceptual Rationale:
+        # The embedding layer maps a token ID to a vector representation. The output layer
+        # maps from a vector representation back to a distribution over token IDs (logits).
+        # Intuitively, these two operations are doing the inverse of each other. Tying the
+        # weights forces them to learn the same representation, which can:
+        #   1. Reduce the total number of parameters in the model, which is especially
+        #      significant for large vocabularies.
+        #   2. Improve model quality by regularizing it and preventing the input and output
+        #      representations from drifting apart.
+        # This is a standard practice in modern language models.
         self.transformer.wte.weight = self.lm_head.weight
 
         # init all weights
         self.apply(self._init_weights)
-        # apply special scaled init to the residual projections, per GPT-2 paper
+        # [INJECTOR: GPT-2 RESIDUAL PROJECTION SCALING]
+        #
+        # This is a specific initialization scheme from the GPT-2 paper. We apply a
+        # scaled normal initialization to the weights of the residual projection layers
+        # (`c_proj` in both attention and MLP).
+        #
+        # The standard deviation is scaled by `1 / sqrt(N)`, where N is the number of
+        # residual layers (`2 * n_layer` because there's one in attention and one in MLP).
+        #
+        # Rationale:
+        # At initialization, the residual connections should be close to an identity function.
+        # By scaling down the weights of the projection layers that are on the residual path,
+        # we ensure that their output is small at the beginning of training. This helps
+        # stabilize the initial training dynamics and prevents the model's outputs from
+        # exploding in magnitude.
         for pn, p in self.named_parameters():
             if pn.endswith('c_proj.weight'):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
