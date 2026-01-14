@@ -132,6 +132,7 @@ cython_debug/
 
 # Project-specific ignores
 # Ignore generated data that is not meant to be versioned.
-/dataset/processed/*
-/dataset/rejected/*
-/training/checkpoints/*
+/dataset/cleaned/
+/dataset/processed/
+/dataset/rejected/
+/training/checkpoints/
