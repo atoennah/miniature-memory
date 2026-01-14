@@ -54,9 +54,9 @@ class FeedForward(nn.Module):
     def __init__(self, config: GPTConfig):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(config.n_embd, 4 * config.n_embd),
+            nn.Linear(config.n_embd, 4 * config.n_embd, bias=False),
             nn.GELU(),
-            nn.Linear(4 * config.n_embd, config.n_embd),
+            nn.Linear(4 * config.n_embd, config.n_embd, bias=False),
             nn.Dropout(config.dropout),
         )
 
@@ -71,7 +71,7 @@ class CausalSelfAttention(nn.Module):
         # Key, query, value projections for all heads, but in a batch
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=False)
         # Output projection
-        self.c_proj = nn.Linear(config.n_embd, config.n_embd)
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
         # Regularization
         self.resid_dropout = nn.Dropout(config.dropout)
         self.n_head = config.n_head
