@@ -41,22 +41,23 @@ from typing import Optional, Tuple
 
 class GPTConfig:
     """Configuration for the GPT model."""
-    def __init__(self, vocab_size: int, block_size: int, n_layer: int, n_head: int, n_embd: int, dropout: float):
+    def __init__(self, vocab_size: int, block_size: int, n_layer: int, n_head: int, n_embd: int, dropout: float, bias: bool = True):
         self.vocab_size = vocab_size
         self.block_size = block_size
         self.n_layer = n_layer
         self.n_head = n_head
         self.n_embd = n_embd
         self.dropout = dropout
+        self.bias = bias
 
 class FeedForward(nn.Module):
     """A simple feed-forward network module."""
     def __init__(self, config: GPTConfig):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(config.n_embd, 4 * config.n_embd),
+            nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias),
             nn.GELU(),
-            nn.Linear(4 * config.n_embd, config.n_embd),
+            nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias),
             nn.Dropout(config.dropout),
         )
 
@@ -71,7 +72,7 @@ class CausalSelfAttention(nn.Module):
         # Key, query, value projections for all heads, but in a batch
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=False)
         # Output projection
-        self.c_proj = nn.Linear(config.n_embd, config.n_embd)
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
         # Regularization
         self.resid_dropout = nn.Dropout(config.dropout)
         self.n_head = config.n_head

@@ -1,0 +1,11 @@
+# Config for benchmark.py - DO NOT EDIT
+# This file is structured to be compatible with the benchmark.py script.
+model:
+  block_size: 256
+  n_layer: 6
+  n_head: 6
+  n_embd: 384
+  dropout: 0.0
+
+training:
+  batch_size: 64

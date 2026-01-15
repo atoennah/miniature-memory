@@ -4,7 +4,7 @@ import torch
 import yaml
 from training.model import GPT, GPTConfig
 
-def run_benchmark(config_path='training/configs/small.yaml'):
+def run_benchmark(config_path='training/configs/benchmark.yaml'):
     """
     Benchmarks the training throughput of the GPT model.
     """
@@ -24,7 +24,8 @@ def run_benchmark(config_path='training/configs/small.yaml'):
         n_layer=model_config['n_layer'],
         n_head=model_config['n_head'],
         n_embd=model_config['n_embd'],
-        dropout=model_config['dropout']
+        dropout=model_config['dropout'],
+        bias=False  # Disable bias for benchmark
     )
 
     model = GPT(config)
