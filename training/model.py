@@ -64,11 +64,50 @@ class FeedForward(nn.Module):
         return self.net(x)
 
 class CausalSelfAttention(nn.Module):
-    """A causal self-attention module with multi-head support."""
+    """
+    A causal self-attention module with multi-head support.
+
+    [INJECTOR: THE LOGOS OF SELF-ATTENTION]
+
+    This module is the heart of the Transformer. It allows the model to weigh the
+    importance of different tokens in the input sequence when producing a representation
+    for each token.
+
+    The core mechanism is Scaled Dot-Product Attention. The formula is:
+        Attention(Q, K, V) = softmax( (Q @ K.T) / sqrt(d_k) ) @ V
+
+    Where:
+    - Q (Query): A projection of the input representing the current token's "question"
+                 about other tokens.
+    - K (Key): A projection of the input representing the other tokens' "answers"
+               or attributes.
+    - V (Value): A projection of the input representing the actual content of the
+                 other tokens.
+
+    The dot product `Q @ K.T` computes a similarity score between each query and all keys.
+    The scaling factor `1 / sqrt(d_k)` (where d_k is the head dimension) is crucial.
+    Without it, for large values of d_k, the dot products can grow very large, pushing
+    the softmax function into regions with extremely small gradients, which makes
+    training unstable.
+
+    Multi-Head Attention:
+    Instead of performing a single attention calculation, we project Q, K, and V multiple
+    times with different, learned linear projections (n_head times). This allows the
+    model to jointly attend to information from different representation subspaces at
+    different positions. It's like having multiple experts, each focusing on a different
+    aspect of the input.
+
+    Causal (Autoregressive) Masking:
+    In a language model, the prediction for token `i` can only depend on the known outputs
+    at positions less than `i`. This is achieved by masking out (setting to -infinity)
+    all values in the attention scores that correspond to future positions. PyTorch's
+    `F.scaled_dot_product_attention` handles this internally with the `is_causal=True` flag.
+    """
     def __init__(self, config: GPTConfig):
         super().__init__()
         assert config.n_embd % config.n_head == 0
-        # Key, query, value projections for all heads, but in a batch
+        # Key, query, value projections for all heads, but in a batch.
+        # A single linear layer is used for efficiency.
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=False)
         # Output projection
         self.c_proj = nn.Linear(config.n_embd, config.n_embd)
@@ -82,19 +121,30 @@ class CausalSelfAttention(nn.Module):
         """Forward pass for the causal self-attention module."""
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
-        # Calculate query, key, values for all heads in batch
+        # [INJECTOR NOTE: BATCHED PROJECTION]
+        # Calculate query, key, values for all heads in batch and move head forward to be the batch dim.
+        # This is a single matrix multiplication that projects the input `x` into Q, K, and V
+        # for all heads simultaneously, which is highly efficient.
         q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
 
-        # Reshape and transpose for multi-head attention
-        # (B, T, C) -> (B, T, nh, hs) -> (B, nh, T, hs)
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        # [INJECTOR NOTE: TENSOR RESHAPING FOR MULTI-HEAD]
+        # Reshape and transpose the Q, K, V tensors to prepare them for multi-head attention.
+        # The dimensions are rearranged from (Batch, Time, Channels) to (Batch, Num_Heads, Time, Head_Size)
+        # This allows the attention mechanism to process all heads in parallel.
+        head_size = C // self.n_head
+        k = k.view(B, T, self.n_head, head_size).transpose(1, 2) # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, head_size).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, head_size).transpose(1, 2) # (B, nh, T, hs)
 
-        # Causal self-attention using PyTorch's fused kernel
+        # [INJECTOR NOTE: FUSED ATTENTION KERNEL]
+        # Causal self-attention using PyTorch's highly optimized fused kernel.
+        # This one function handles the dot product, scaling, masking, softmax, and value multiplication.
+        # `is_causal=True` ensures that attention is only paid to previous tokens, making the model autoregressive.
         y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
 
-        # Re-assemble all head outputs side by side
+        # [INJECTOR NOTE: REASSEMBLING THE HEADS]
+        # Re-assemble all head outputs side by side. The transpose and view operations reverse the
+        # reshaping done earlier, concatenating the outputs of all heads to form the final result.
         # (B, nh, T, hs) -> (B, T, nh, hs) -> (B, T, C)
         y = y.transpose(1, 2).contiguous().view(B, T, C)
 
@@ -159,9 +209,19 @@ class GPT(nn.Module):
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
         pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0)
 
-        # Token and position embeddings
-        tok_emb = self.transformer.wte(idx)
-        pos_emb = self.transformer.wpe(pos)
+        # [INJECTOR: THE CONCEPT OF POSITION]
+        # The Transformer architecture is permutation-invariant, meaning it has no inherent
+        # sense of token order. To provide the model with sequential information, we
+        # introduce positional embeddings.
+        #
+        # `wte` (Word Token Embeddings): Maps each token index to a dense vector representation.
+        # `wpe` (Word Position Embeddings): Maps each integer position (0, 1, ..., t) to a
+        #                                  dense vector.
+        #
+        # These two embeddings are summed element-wise to create a final representation
+        # that encodes both the token's identity and its position in the sequence.
+        tok_emb = self.transformer.wte(idx) # (b, t, n_embd)
+        pos_emb = self.transformer.wpe(pos) # (1, t, n_embd)
         x = self.transformer.drop(tok_emb + pos_emb)
 
         # Transformer blocks

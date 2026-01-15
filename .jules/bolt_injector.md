@@ -37,3 +37,16 @@ This journal logs high-value, transferable wisdom injected into the codebase. Ea
 4.  **Architectural Stability:** Added notes to the `Block` class on residual connections and pre-layer normalization, two of the most critical and often misunderstood components for successfully training deep Transformers.
 
 **Wisdom Transfered:** The core components of the GPT model in this repository are no longer undocumented kernels. They are now self-contained, educational modules. This serves as a bulwark against conceptual rot and ensures that future modifications are built upon a solid foundation of understanding.
+
+---
+
+### Entry 2: Illuminating the Foundations of Attention and Position
+
+**Date:** 2024-07-25T10:00:00Z
+**Location:** `training/model.py`
+**Injection Summary:**
+
+1.  **The Logos of Self-Attention:** Injected a detailed theoretical explanation directly into the `CausalSelfAttention` docstring. This note explains the Scaled Dot-Product Attention formula, the mathematical necessity of the `sqrt(d_k)` scaling factor for training stability, and the conceptual model of multi-head attention as parallel expert networks. This transforms a functional but opaque module into a self-contained lesson.
+2.  **The Concept of Position:** Injected a comment into the `GPT.forward` method to explain *why* positional embeddings are non-negotiable in a Transformer. The note clarifies that the architecture is inherently permutation-invariant and requires these embeddings to understand sequence order.
+
+**Wisdom Transfered:** Core architectural components should never be "black boxes." By injecting the "why" directly into the code, we make the codebase a living, educational document. This reduces the cognitive load on future developers, prevents the re-introduction of "magic," and ensures that the system's foundational principles are always visible and understood. The invisible has been made visible.
