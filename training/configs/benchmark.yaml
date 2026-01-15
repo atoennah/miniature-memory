@@ -1,0 +1,9 @@
+# Configuration for benchmark.py
+model:
+    block_size: 256
+    n_layer: 6
+    n_head: 6
+    n_embd: 384
+    dropout: 0.2
+training:
+    batch_size: 64
