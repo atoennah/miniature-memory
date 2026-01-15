@@ -3,7 +3,6 @@ import sys
 import subprocess
 from importlib.metadata import PackageNotFoundError, version
 
-
 def check_dependencies():
     """Checks if all the required packages are installed."""
     try:
@@ -37,14 +36,70 @@ def _handle_import_error(module_name):
     print("  pip install -r requirements.txt", file=sys.stderr)
     sys.exit(1)
 
+class Pipeline:
+    """Orchestrates the data processing and model training pipeline."""
+
+    def __init__(self, args):
+        self.args = args
+
+    def _run_validation(self):
+        """Runs the raw data validation step."""
+        if not self.args.skip_validation:
+            try:
+                from scripts.validate_raw import run_validation
+            except ImportError:
+                _handle_import_error("scripts.validate_raw")
+            print("--- Running Validation ---")
+            run_validation("dataset/raw")
+            print("--- Validation completed successfully ---\n")
+
+    def _run_cleaning(self):
+        """Runs the dataset cleaning step."""
+        if not self.args.skip_cleaning:
+            try:
+                from scripts.clean_dataset import run_cleaning
+            except ImportError:
+                _handle_import_error("scripts.clean_dataset")
+            print("--- Running Cleaning ---")
+            run_cleaning("dataset/raw", "dataset/cleaned")
+            print("--- Cleaning completed successfully ---\n")
+
+    def _run_preparation(self):
+        """Runs the data preparation step."""
+        if not self.args.skip_preparation:
+            try:
+                from scripts.prepare_data import run_preparation
+            except ImportError:
+                _handle_import_error("scripts.prepare_data")
+            print("--- Running Preparation ---")
+            run_preparation("dataset/cleaned", "dataset/processed")
+            print("--- Preparation completed successfully ---\n")
+
+    def _run_training(self):
+        """Runs the model training step."""
+        if not self.args.skip_training:
+            try:
+                from training.train import main as run_training
+            except ImportError:
+                _handle_import_error("training.train")
+            print("--- Running Training ---")
+            run_training()
+            print("--- Training completed successfully ---\n")
+
+    def run(self):
+        """Executes the entire pipeline in the correct order."""
+        print("Starting the miniature-memory pipeline...\n")
+        self._run_validation()
+        self._run_cleaning()
+        self._run_preparation()
+        self._run_training()
+        print("Pipeline finished.")
+
 def main():
     """
-    Main function to run the miniature-memory data and training pipeline.
-
-    This script orchestrates the validation, cleaning, preparation, and training
-    stages. Each stage can be skipped via command-line arguments.
+    Main function to configure and run the miniature-memory pipeline.
     """
-    # At Startup (The Morning Briefing): Pull the latest state from the Hub.
+    # At Startup: Pull the latest state from the Hub.
     print("--- Synchronizing with Hugging Face Hub (Pulling) ---")
     try:
         subprocess.run(["python3", "scripts/sync_hub.py", "pull", "--target", "all"], check=True)
@@ -77,50 +132,13 @@ def main():
     )
     args, unknown = parser.parse_known_args()
 
-    # Pass the unknown arguments to the training script
+    # Pass unknown arguments to the training script
     sys.argv = [sys.argv[0]] + unknown
 
-    print("Starting the miniature-memory pipeline...\n")
+    pipeline = Pipeline(args)
+    pipeline.run()
 
-    if not args.skip_validation:
-        try:
-            from scripts.validate_raw import run_validation
-        except ImportError:
-            _handle_import_error("scripts.validate_raw")
-        print("--- Running Validation ---")
-        run_validation("dataset/raw")
-        print("--- Validation completed successfully ---\n")
-
-    if not args.skip_cleaning:
-        try:
-            from scripts.clean_dataset import run_cleaning
-        except ImportError:
-            _handle_import_error("scripts.clean_dataset")
-        print("--- Running Cleaning ---")
-        run_cleaning("dataset/raw", "dataset/cleaned")
-        print("--- Cleaning completed successfully ---\n")
-
-    if not args.skip_preparation:
-        try:
-            from scripts.prepare_data import run_preparation
-        except ImportError:
-            _handle_import_error("scripts.prepare_data")
-        print("--- Running Preparation ---")
-        run_preparation("dataset/cleaned", "dataset/processed")
-        print("--- Preparation completed successfully ---\n")
-
-    if not args.skip_training:
-        try:
-            from training.train import main as run_training
-        except ImportError:
-            _handle_import_error("training.train")
-        print("--- Running Training ---")
-        run_training()
-        print("--- Training completed successfully ---\n")
-
-    print("Pipeline finished.")
-
-    # After Training (The Clock Out): Push the new state to the Hub.
+    # After Training: Push the new state to the Hub.
     print("\n--- Synchronizing with Hugging Face Hub (Pushing) ---")
     try:
         subprocess.run(["python3", "scripts/sync_hub.py", "push", "--target", "all"], check=True)
