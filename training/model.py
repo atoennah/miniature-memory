@@ -41,27 +41,46 @@ from typing import Optional, Tuple
 
 class GPTConfig:
     """Configuration for the GPT model."""
-    def __init__(self, vocab_size: int, block_size: int, n_layer: int, n_head: int, n_embd: int, dropout: float):
+    def __init__(self, vocab_size: int, block_size: int, n_layer: int, n_head: int, n_embd: int, dropout: float, bias: bool = True):
         self.vocab_size = vocab_size
         self.block_size = block_size
         self.n_layer = n_layer
         self.n_head = n_head
         self.n_embd = n_embd
         self.dropout = dropout
+        self.bias = bias
 
 class FeedForward(nn.Module):
-    """A simple feed-forward network module."""
+    """
+    A simple feed-forward network module.
+    Refactored from nn.Sequential to explicit layers for clarity and to disable bias.
+    """
     def __init__(self, config: GPTConfig):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(config.n_embd, 4 * config.n_embd),
-            nn.GELU(),
-            nn.Linear(4 * config.n_embd, config.n_embd),
-            nn.Dropout(config.dropout),
-        )
+        # [BOLT-INJECTOR: BIAS-FREE MLP]
+        # Why disable bias in the MLP?
+        # 1.  Performance: Eliminating the bias term reduces the model's parameter
+        #     count and can lead to slightly faster computation, as it removes an
+        #     addition operation from the kernel.
+        # 2.  Stability: In deep networks, LayerNorm (which follows the MLP in the
+        #     Transformer block) already provides a shifting/biasing mechanism.
+        #     The bias term in the linear layer is often redundant and can sometimes
+        #     contribute to instability.
+        # 3.  Regularization: It's a form of regularization, slightly reducing the
+        #     model's capacity and encouraging it to learn more robust features.
+        # NOTE: This is now configurable via `config.bias` to maintain backward
+        # compatibility with older model checkpoints.
+        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+        self.gelu    = nn.GELU()
+        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+        self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+        x = self.c_fc(x)
+        x = self.gelu(x)
+        x = self.c_proj(x)
+        x = self.dropout(x)
+        return x
 
 class CausalSelfAttention(nn.Module):
     """A causal self-attention module with multi-head support."""
@@ -71,7 +90,13 @@ class CausalSelfAttention(nn.Module):
         # Key, query, value projections for all heads, but in a batch
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=False)
         # Output projection
-        self.c_proj = nn.Linear(config.n_embd, config.n_embd)
+        # [BOLT-INJECTOR: BIAS-FREE PROJECTION]
+        # The reasoning for disabling bias here is the same as in the MLP. The subsequent
+        # addition in the residual connection and the following LayerNorm already handle
+        # the necessary mean-shifting, making the projection bias redundant.
+        # NOTE: This is now configurable via `config.bias` to maintain backward
+        # compatibility with older model checkpoints.
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
         # Regularization
         self.resid_dropout = nn.Dropout(config.dropout)
         self.n_head = config.n_head
