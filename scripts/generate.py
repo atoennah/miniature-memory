@@ -26,7 +26,7 @@ def get_tokenizer(data_path):
 
     return vocab_size, encode, decode
 
-def main(config):
+def main(config, checkpoint_path, max_new_tokens, start_text):
     """Generates text from a trained model and measures resource usage."""
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -43,16 +43,15 @@ def main(config):
     )
 
     model = GPT(gpt_config)
-    model.load_state_dict(torch.load(config['generate']['checkpoint_path'], map_location=device))
+    model.load_state_dict(torch.load(checkpoint_path, map_location=device))
     model.to(device)
     model.eval()
 
     # --- Generation ---
-    start_text = config['generate'].get('start_text', ' ')
     start_ids = encode(start_text)
     x = (torch.tensor(start_ids, dtype=torch.long, device=device)[None, ...])
 
-    print(f"Generating {config['generate']['max_new_tokens']} tokens from prompt: '{start_text}'")
+    print(f"Generating {max_new_tokens} tokens from prompt: '{start_text}'")
     print("-" * 30)
 
     # --- Measurement ---
@@ -64,7 +63,7 @@ def main(config):
     with torch.no_grad():
         y = model.generate(
             x,
-            max_new_tokens=config['generate']['max_new_tokens'],
+            max_new_tokens=max_new_tokens,
             temperature=config['inference']['temperature'],
             top_p=config['inference']['top_p']
         )
@@ -79,7 +78,7 @@ def main(config):
 
     # --- Performance Metrics ---
     duration = end_time - start_time
-    tokens_per_sec = config['generate']['max_new_tokens'] / duration if duration > 0 else float('inf')
+    tokens_per_sec = max_new_tokens / duration if duration > 0 else float('inf')
 
     print(f"Performance Metrics:")
     print(f"  - Peak RAM Usage: {mem_after:.2f} MB")
@@ -87,29 +86,15 @@ def main(config):
     print(f"  - Generation Time:  {duration:.2f} seconds")
     print(f"  - Tokens per Second: {tokens_per_sec:.2f}")
 
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Generate text from a trained NanoGPT model.")
-    parser.add_argument(
-        '--config',
-        type=str,
-        default='training/configs/small.yaml',
-        help='Path to the YAML configuration file used for training.'
-    )
-    parser.add_argument(
-        '--max_new_tokens',
-        type=int,
-        default=100,
-        help='Number of new tokens to generate.'
-    )
+    parser.add_argument('--config', type=str, required=True, help='Path to the YAML configuration file used for training.')
+    parser.add_argument('--checkpoint_path', type=str, required=True, help='Path to the model checkpoint file.')
+    parser.add_argument('--max_new_tokens', type=int, default=100, help='Number of new tokens to generate.')
+    parser.add_argument('--start_text', type=str, default=" ", help='The initial text prompt.')
     args = parser.parse_args()
 
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
 
-    # Add generation-specific config values
-    config.setdefault('generate', {})['checkpoint_path'] = 'training/checkpoints/model.pt'
-    config.setdefault('generate', {})['max_new_tokens'] = args.max_new_tokens
-    config.setdefault('data', {})['path'] = 'dataset/processed/train.txt'
-
-    main(config)
+    main(config, args.checkpoint_path, args.max_new_tokens, args.start_text)
