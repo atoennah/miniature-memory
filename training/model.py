@@ -143,11 +143,44 @@ class CausalSelfAttention(nn.Module):
         # Calculate query, key, values for all heads in batch
         q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
 
-        # Reshape and transpose for multi-head attention
-        # (B, T, C) -> (B, T, nh, hs) -> (B, nh, T, hs)
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        # [INJECTOR: DEMYSTIFYING MULTI-HEAD TENSOR MANIPULATION]
+        #
+        # The core idea of multi-head attention is to run the attention mechanism in
+        # parallel several times, with different, learned linear projections for Q, K,
+        # and V. This allows the model to jointly attend to information from different
+        # representational subspaces at different positions.
+        #
+        # The tensor transformations below are the key to making this efficient.
+        # Let's break down the journey of the Key tensor `k`:
+        #
+        # 1.  Initial shape of `k`: `(B, T, C)`
+        #     - B = Batch size (number of sequences processed at once)
+        #     - T = Sequence length (e.g., `block_size`)
+        #     - C = Embedding dimension (`n_embd`)
+        #
+        # 2.  `k.view(B, T, self.n_head, C // self.n_head)`
+        #     - This reshapes the tensor without changing its data. We are splitting the
+        #       embedding dimension `C` into `n_head` smaller chunks.
+        #     - `hs = C // self.n_head` is the "head size".
+        #     - New shape: `(B, T, nh, hs)` where `nh` is `n_head`.
+        #     - This logically groups the embeddings for each head, but they are still
+        #       interleaved in memory.
+        #
+        # 3.  `.transpose(1, 2)`
+        #     - This is the crucial step. We swap the sequence length dimension (T) with
+        #       the number of heads dimension (nh).
+        #     - New shape: `(B, nh, T, hs)`
+        #     - Why? The `scaled_dot_product_attention` function expects the heads to
+        #       be in the "batch" dimension. By rearranging the tensor this way, we
+        #       create a batch of `B * nh` attention problems, each of size `(T, hs)`.
+        #       PyTorch's optimized kernel can then process all these heads in parallel,
+        #       which is massively faster than looping through them.
+        #
+        # The same transformation is applied to `q` and `v`, preparing them for the
+        # batched attention calculation.
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
         # Causal self-attention using PyTorch's fused kernel
         y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
@@ -212,6 +245,24 @@ class GPT(nn.Module):
 
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),
+            # [INJECTOR: THE NECESSITY OF POSITIONAL EMBEDDINGS]
+            #
+            # The self-attention mechanism is permutation-invariant; it treats the input
+            # as a "bag of tokens" with no inherent order. "The cat sat on the mat" and
+            # "The mat sat on the cat" would produce nearly identical attention scores
+            # if only token embeddings were used.
+            #
+            # To solve this, we inject positional information directly into the model.
+            # The `wpe` (Word Position Embedding) layer is a learnable lookup table where
+            # each position in the sequence (from 0 to `block_size - 1`) has a unique
+            # vector. This positional vector is added to the token embedding.
+            #
+            # tok_emb (B, T, C) + pos_emb (1, T, C) -> input (B, T, C)
+            #
+            # By adding these two embeddings, we create a composite representation that
+            # encodes both *what* a token is (its semantic meaning) and *where* it is
+            # in the sequence. The model can then learn to use this positional information
+            # to understand grammar, syntax, and long-range dependencies.
             wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
