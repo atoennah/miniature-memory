@@ -243,11 +243,6 @@ class GPT(nn.Module):
         # Link: https://paperswithcode.com/method/weight-tying
         self.transformer.wte.weight = self.lm_head.weight
 
-        # Bolt's Optimization: Cache positional indices to avoid re-creating this
-        # tensor on the GPU in every forward pass.
-        # See Bolt's Journal (.jules/bolt_llm.md) for a detailed explanation.
-        self.register_buffer("pos", torch.arange(config.block_size, dtype=torch.long).unsqueeze(0))
-
         # init all weights
         self.apply(self._init_weights)
         # [INJECTOR: GPT-2 STYLE WEIGHT INITIALIZATION]
@@ -285,8 +280,8 @@ class GPT(nn.Module):
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
 
-        # Use the cached positional buffer, slicing if necessary
-        pos = self.pos[:, :t]
+        # Create positional tensor on the fly
+        pos = torch.arange(t, dtype=torch.long, device=idx.device).unsqueeze(0)
 
         # Token and position embeddings
         tok_emb = self.transformer.wte(idx)
