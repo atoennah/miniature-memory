@@ -2,65 +2,37 @@
 
 This journal is the canonical log for all significant architectural decisions, scientific optimizations, and philosophical refactors undertaken by the **Bolt** persona. It serves as the "cache for the human brain," ensuring that the *why* behind critical changes is never lost.
 
-Entries in this journal must follow the format of a scientific paper:
-- **Hypothesis:** What we believe to be true.
-- **Methodology:** How we will test it.
-- **Results:** The empirical data (e.g., benchmarks, loss curves).
-- **Conclusion:** The decision made based on the data.
-- **Philosophical Note:** The deeper principle this change reinforces.
+Entries in this journal must follow the format of a scientific paper or a concise, evidence-based log.
 
 ---
 
-## YYYY-MM-DD: [Title of Entry]
+## 2024-07-24: Conceptual Injection for `training/model.py`
 
-### Hypothesis
-A clear, testable statement. *e.g., "Replacing the manual self-attention implementation with `torch.nn.functional.scaled_dot_product_attention` will reduce training time on CPU without affecting model correctness."*
-
-### Methodology
-The exact steps taken to test the hypothesis. *e.g., "1. Benchmark the `main` branch training loop for 100 steps using `time python3 run.py --skip-validation --skip-cleaning --skip-preparation`. 2. Create a new branch `feature/fused-attention`. 3. Replace the attention mechanism in `training/model.py`. 4. Re-run the exact same benchmark command 3 times and average the results."*
-
-### Results
-Quantitative outcomes.
-| Metric | Before | After | Change |
-| :--- | :--- | :--- | :--- |
-| `real` time (avg) | 3m32s | 3m23s | -4.5% |
-| Final Loss | 2.6811 | 2.6811 | 0% |
-| Peak RAM | 1.2GB | 1.2GB | 0% |
-
-### Conclusion
-The decision made. *e.g., "The hypothesis is confirmed. Fused attention provides a measurable performance gain on CPU with no impact on the final loss. The change will be merged."*
-
-### Philosophical Note
-The underlying principle. *e.g., "This change aligns with our 'first principles' approach to optimization. We delegate low-level, hardware-specific operations to the framework's optimized kernels (`PyTorch`) rather than maintaining our own, less efficient implementations. This improves both performance and conceptual clarity."*
-# ⚡ Bolt's Journal: Findings & Architectural Log
-
-This journal is maintained by the **Bolt** persona. It serves as a log for:
-
--   **Empirical benchmarks:** Performance measurements before and after optimizations.
--   **Architectural decisions:** The "why" behind significant code structure changes.
--   **Failed experiments:** Lessons learned from approaches that didn't work.
--   **Statistical truths:** Data-driven observations about the model or dataset.
-
-The goal is to create a persistent, long-term memory of the project's technical evolution, ensuring that decisions are documented and repeatable.
-# ⚡ Bolt Journal
-
-This journal is the official log of significant, project-level optimizations and architectural decisions made by the **Bolt** persona. It serves as the "cache for the human brain," ensuring that the reasoning behind critical changes is never lost.
-
-Each entry must be concise, evidence-based, and clearly articulate the **Discovery**, **Strategy**, and **Evidence** for the change.
+-   **Discovery:** The core transformer logic in `training/model.py` was a functional "black box." It worked, but it did not teach. The mathematical and architectural principles were implicit, violating the core philosophy that code should be a living, educational document.
+-   **Strategy:** Performed a deep, multi-level conceptual injection to transform `training/model.py` into a pedagogical asset. This included adding a file-level header on its philosophical purpose, a verbose block comment in `CausalSelfAttention` deriving the attention formula, narrated tensor transformation comments, and architectural docstrings for all major classes.
+-   **Conclusion:** The module is no longer merely functional; it is **conceptually transparent**.
+-   **Philosophical Note:** By embedding the "why" (the theory) directly alongside the "how" (the code), we reduce cognitive overhead, accelerate onboarding, and create a more resilient and maintainable system.
 
 ---
 
-### YYYY-MM-DD: Template Entry
+## 2024-05-21: Deferred Imports in `run.py`
 
--   **Discovery:** A clear, one-sentence statement of the problem or bottleneck that was identified.
-    -   *Example: The manual implementation of `MultiHeadAttention` in `training/model.py` was identified as a performance bottleneck due to its Python-level looping, failing to leverage fused GPU kernels.*
+-   **Hypothesis:** Deferring the import of pipeline modules in `run.py` until they are explicitly needed will significantly reduce the script's startup time and memory footprint.
+-   **Methodology:** Measured the execution time of `run.py` with all stages skipped, both before and after moving `import` statements into their corresponding conditional blocks.
+-   **Results:**
+    -   **Before:** 4.819s
+    -   **After:** 0.409s
+    -   **Change:** 91.5% reduction in startup overhead.
+-   **Conclusion:** The hypothesis was confirmed. The deferred-import pattern is a foundational optimization that aligns the codebase with its goals of minimalism and efficiency.
+-   **Philosophical Note:** The code now more closely follows the Principle of Least Action, loading only the logic necessary for the task at hand.
 
--   **Strategy:** A description of the technical solution that was implemented.
-    -   *Example: Refactored the attention mechanism to use `torch.nn.functional.scaled_dot_product_attention`, which automatically dispatches to optimized implementations like FlashAttention when available, improving both performance and memory efficiency.*
-
--   **Evidence:** Concrete, measurable proof of the improvement. This must include before-and-after metrics.
-    -   *Example:*
-        -   **Before:** Training on a batch of 64 with `block_size` of 256 averaged **850 tokens/sec**.
-        -   **After:** The same training configuration now averages **1,250 tokens/sec**, a **47% improvement** in throughput.
-        -   **Memory:** Peak VRAM usage during the forward pass was reduced by 15%.
 ---
+
+## Entry: Initial Learning Rate Audit
+
+-   **Hypothesis:** The default learning rate of `1e-4` in `small.yaml` is too aggressive for the dataset and will result in a suboptimal loss. A more conservative `1e-5` should perform better.
+-   **Methodology:** Executed two 100-step training runs, one with the baseline `1e-4` learning rate and one with `1e-5`.
+-   **Results:**
+    -   **Baseline Loss (`lr=1e-4`):** 2.6345
+    -   **Experimental Loss (`lr=1e-5`):** 3.3553
+-   **Conclusion:** Hypothesis **REJECTED**. The more aggressive `1e-4` learning rate is demonstrably more effective for this model over a 100-step micro-train. The faster convergence leads to a significantly lower loss.
