@@ -30,13 +30,6 @@ def check_dependencies():
         print("\nPlease install them by running: pip install -r requirements.txt", file=sys.stderr)
         sys.exit(1)
 
-def _handle_import_error(module_name):
-    """Prints a user-friendly error message and exits."""
-    print(f"Error: The required module '{module_name}' is not installed.", file=sys.stderr)
-    print("Please install the necessary dependencies by running:", file=sys.stderr)
-    print("  pip install -r requirements.txt", file=sys.stderr)
-    sys.exit(1)
-
 def main():
     """
     Main function to run the miniature-memory data and training pipeline.
@@ -44,16 +37,6 @@ def main():
     This script orchestrates the validation, cleaning, preparation, and training
     stages. Each stage can be skipped via command-line arguments.
     """
-    # At Startup (The Morning Briefing): Pull the latest state from the Hub.
-    print("--- Synchronizing with Hugging Face Hub (Pulling) ---")
-    try:
-        subprocess.run(["python3", "scripts/sync_hub.py", "pull", "--target", "all"], check=True)
-        print("--- Synchronization (Pull) complete ---\n")
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        print(f"Warning: Could not pull from Hugging Face Hub. Continuing with local state. Error: {e}\n", file=sys.stderr)
-
-    check_dependencies()
-
     parser = argparse.ArgumentParser(
         description="A unified script to run the miniature-memory pipeline."
     )
@@ -75,7 +58,23 @@ def main():
         default="training/configs/small.yaml",
         help="Path to the training configuration file."
     )
+    parser.add_argument(
+        "--no-sync", action="store_true", help="Disable Hugging Face Hub synchronization."
+    )
     args, unknown = parser.parse_known_args()
+
+    # At Startup (The Morning Briefing): Pull the latest state from the Hub.
+    if not args.no_sync:
+        print("--- Synchronizing with Hugging Face Hub (Pulling) ---")
+        try:
+            subprocess.run(["python3", "scripts/sync_hub.py", "pull", "--target", "all"], check=True)
+            print("--- Synchronization (Pull) complete ---\n")
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            print(f"Warning: Could not pull from Hugging Face Hub. Continuing with local state. Error: {e}\n", file=sys.stderr)
+    else:
+        print("--- Skipping Hugging Face Hub synchronization as per --no-sync flag ---\n")
+
+    check_dependencies()
 
     # Pass the unknown arguments to the training script
     sys.argv = [sys.argv[0]] + unknown
@@ -83,50 +82,42 @@ def main():
     print("Starting the miniature-memory pipeline...\n")
 
     if not args.skip_validation:
-        try:
-            from scripts.validate_raw import run_validation
-        except ImportError:
-            _handle_import_error("scripts.validate_raw")
         print("--- Running Validation ---")
-        run_validation("dataset/raw")
+        subprocess.run(["python3", "scripts/validate_raw.py"], check=True)
         print("--- Validation completed successfully ---\n")
 
     if not args.skip_cleaning:
-        try:
-            from scripts.clean_dataset import run_cleaning
-        except ImportError:
-            _handle_import_error("scripts.clean_dataset")
         print("--- Running Cleaning ---")
-        run_cleaning("dataset/raw", "dataset/cleaned")
+        subprocess.run(["python3", "scripts/clean_dataset.py"], check=True)
         print("--- Cleaning completed successfully ---\n")
 
     if not args.skip_preparation:
-        try:
-            from scripts.prepare_data import run_preparation
-        except ImportError:
-            _handle_import_error("scripts.prepare_data")
         print("--- Running Preparation ---")
-        run_preparation("dataset/cleaned", "dataset/processed")
+        subprocess.run(["python3", "scripts/prepare_data.py"], check=True)
         print("--- Preparation completed successfully ---\n")
 
     if not args.skip_training:
+        print("--- Running Training ---")
+        # Note: training/train.py is not yet a standalone script, so we keep the import for now.
         try:
             from training.train import main as run_training
+            run_training()
         except ImportError:
             _handle_import_error("training.train")
-        print("--- Running Training ---")
-        run_training()
         print("--- Training completed successfully ---\n")
 
     print("Pipeline finished.")
 
-    # After Training (The Clock Out): Push the new state to the Hub.
-    print("\n--- Synchronizing with Hugging Face Hub (Pushing) ---")
-    try:
-        subprocess.run(["python3", "scripts/sync_hub.py", "push", "--target", "all"], check=True)
-        print("--- Synchronization (Push) complete ---")
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        print(f"Warning: Could not push to Hugging Face Hub. Local changes are not saved to the cloud. Error: {e}", file=sys.stderr)
+    # After Training (The Clock Out): Push the new state to the Hub, if not disabled.
+    if not args.no_sync:
+        print("\n--- Synchronizing with Hugging Face Hub (Pushing) ---")
+        try:
+            subprocess.run(["python3", "scripts/sync_hub.py", "push", "--target", "all"], check=True)
+            print("--- Synchronization (Push) complete ---")
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            print(f"Warning: Could not push to Hugging Face Hub. Local changes are not saved to the cloud. Error: {e}", file=sys.stderr)
+    else:
+        print("\n--- Skipping Hugging Face Hub synchronization as per --no-sync flag ---")
 
 
 if __name__ == "__main__":
