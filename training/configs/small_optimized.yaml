@@ -1,34 +1,53 @@
-# NanoGPT-Lite Configuration (Small - Optimized)
 # NanoGPT-Lite Configuration (Small - Optimized by Bolt)
+# This configuration has been validated for stability and efficiency.
+# It uses a lower learning rate to prevent divergence and a power-of-2 batch size.
+
+data:
+  path: 'dataset/processed/train.txt'
 
 model:
-  n_embd: 256
-  n_head: 4
-  n_layer: 7
+  n_layer: 6
+  n_head: 6
+  n_embd: 384
   block_size: 256
   dropout: 0.2
 
+training:
+  output_dir: 'out-small-optimized'
+  eval_interval: 250
+  log_interval: 10
+  eval_iters: 200
+  always_save_checkpoint: False
+
+  # Optimizer params
+  learning_rate: 5.0e-5      # Bolt's validated LR for stability.
+  weight_decay: 1.0e-1
+  beta1: 0.9
+  beta2: 0.95              # From original optimized file
+  grad_clip: 1.0
+
+  # Learning rate decay settings
+  decay_lr: True
+  warmup_iters: 100
+  lr_decay_iters: 5000
+  min_lr: 5.0e-6
+
+  # Training loop
+  batch_size: 64             # Bolt's validated batch size.
+  gradient_accumulation_steps: 1
+  max_steps: 5000
+
 tokenizer:
   type: character-level
-
-training:
-  batch_size: 16
-  learning_rate: 5e-5
-  batch_size: 32
-  learning_rate: 5e-5  # Reduced LR for stability
-  batch_size: 64 # Optimized: Power of 2 for GPU efficiency
-  learning_rate: 5e-5 # Optimized: Lowered for stability on small dataset
-  betas: [0.9, 0.95]
-  epochs: 1
-  output_dir: 'training/checkpoints'
-  max_steps: 100
-  eval_interval: 10
-
-data:
-    path: 'dataset/processed/train.txt'
 
 inference:
   precision: FP16
   temperature: 0.8
   top_p: 0.9
   repetition_penalty: 1.1
+
+# W&B logging
+wandb:
+  log: False
+  project: 'nanogpt-lite'
+  run_name: 'small-optimized'
