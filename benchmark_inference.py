@@ -6,7 +6,7 @@ from training.model import GPT, GPTConfig
 
 def run_benchmark(config_path='training/configs/benchmark.yaml'):
     """
-    Benchmarks the training throughput of the GPT model.
+    Benchmarks the inference throughput of the GPT model's generate method.
     """
     # Load configuration from YAML
     with open(config_path, 'r') as f:
@@ -28,43 +28,37 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     )
 
     model = GPT(config)
-    model.eval() # Set to eval mode to disable dropout for benchmark
+    model.eval() # Set to eval mode for generation
 
-    # Generate dummy data
+    # Generate a dummy starting token
     batch_size = training_config['batch_size']
-    block_size = model_config['block_size']
-    dummy_input = torch.randint(0, vocab_size, (batch_size, block_size))
-    dummy_target = torch.randint(0, vocab_size, (batch_size, block_size))
+    start_token = torch.randint(0, vocab_size, (batch_size, 1))
 
     # Benchmark settings
-    num_steps = 20
-    warmup_steps = 5
+    tokens_to_generate = 100
+    warmup_tokens = 10
 
     # Warmup phase
-    for _ in range(warmup_steps):
-        _, _, _ = model(dummy_input, dummy_target)
+    _ = model.generate(start_token, max_new_tokens=warmup_tokens)
 
     # Benchmark phase
     start_time = time.time()
-    for _ in range(num_steps):
-        _, _, _ = model(dummy_input, dummy_target)
+    _ = model.generate(start_token, max_new_tokens=tokens_to_generate)
     end_time = time.time()
 
     # Calculate throughput
     total_time = end_time - start_time
-    tokens_per_step = batch_size * block_size
-    total_tokens = num_steps * tokens_per_step
+    total_tokens = batch_size * tokens_to_generate
     tokens_per_second = total_tokens / total_time
 
-    print(f"--- Benchmark Results ---")
+    print(f"--- Inference Benchmark Results ---")
     print(f"Configuration: {config_path}")
-    print(f"Steps: {num_steps}")
     print(f"Batch Size: {batch_size}")
-    print(f"Block Size: {block_size}")
-    print(f"Total Tokens: {total_tokens}")
+    print(f"Tokens Generated per sample: {tokens_to_generate}")
+    print(f"Total Tokens Generated: {total_tokens}")
     print(f"Total Time: {total_time:.2f} seconds")
     print(f"Throughput: {tokens_per_second:.2f} tokens/sec")
-    print(f"-----------------------")
+    print(f"---------------------------------")
     return tokens_per_second
 
 if __name__ == "__main__":
