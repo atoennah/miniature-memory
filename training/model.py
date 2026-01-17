@@ -74,6 +74,31 @@ class FeedForward(nn.Module):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(config.n_embd, 4 * config.n_embd, bias=False),
+            # [INJECTOR: THE RATIONALE FOR GELU]
+            #
+            # Why GELU (Gaussian Error Linear Unit) over the more common ReLU?
+            # GELU(x) = x * Φ(x), where Φ(x) is the cumulative distribution function
+            # of the standard normal distribution.
+            #
+            # 1.  Non-linearity and Smoothness: Like ReLU, it's a non-linear activation,
+            #     allowing the network to learn complex functions. However, unlike ReLU,
+            #     GELU is smooth and continuously differentiable, which can be beneficial
+            #     for gradient-based optimization.
+            #
+            # 2.  Probabilistic Interpretation: The key innovation of GELU is that it
+            #     weights its input by its magnitude, but also by the probability of
+            #     how much larger it is than other inputs. It stochastically gates the
+            #     activation, giving it a more probabilistic interpretation. This means
+            #     it's more likely to "drop" (zero out) inputs that are negative, but
+            #     there's a chance they might be kept, unlike ReLU which has a hard
+            #     zero-cutoff.
+            #
+            # 3.  Empirical Performance: In Transformer models specifically, GELU has
+            #     been shown to yield better empirical performance than ReLU. It has become
+            #     the de-facto standard activation function for models like BERT, GPT-2,
+            #     and their successors.
+            #
+            # Link: https://arxiv.org/abs/1606.08415
             nn.GELU(),
             nn.Linear(4 * config.n_embd, config.n_embd, bias=False),
             nn.Dropout(config.dropout),
@@ -135,6 +160,30 @@ class CausalSelfAttention(nn.Module):
         self.n_head = config.n_head
         self.n_embd = config.n_embd
         self.dropout = config.dropout
+        # [INJECTOR: THE KEY-VALUE (KV) CACHE OPTIMIZATION]
+        #
+        # During autoregressive generation (i.e., in the `generate` method), the model
+        # produces one token at a time. For each new token, the self-attention mechanism
+        # re-calculates the attention scores over the *entire* sequence generated so far.
+        # This is incredibly wasteful.
+        #
+        # Consider generating the 100th token. The Key (K) and Value (V) vectors for the
+        # first 99 tokens have already been computed. They do not change. However, a naive
+        # implementation will re-compute them from scratch at every single step.
+        #
+        # The KV Cache solves this. The idea is to cache the K and V tensors after they
+        # are computed for each token. When generating the next token, we can simply reuse
+        # the cached K and V tensors from the previous steps and only compute the K and V
+        # for the single new token. We then concatenate the new K and V to the cached ones.
+        #
+        # This changes the complexity of the attention calculation during generation from
+        # O(T^2) to O(T) for each new token, where T is the sequence length. This results
+        # in a massive speedup for inference.
+        #
+        # This implementation does NOT use a KV cache in its `forward` pass, making it
+        # clear for training. However, a high-performance `generate` method would need to
+        # be modified to manage and pass this cache between steps. A `use_cache` flag
+        # and returning the `(k, v)` pairs would be required.
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass for the causal self-attention module."""
@@ -367,7 +416,48 @@ class GPT(nn.Module):
             logits, _ = self(idx_cond)
             logits = logits[:, -1, :] / temperature
 
-            # Top-p (nucleus) sampling
+            # [INJECTOR: THE THEORY OF NUCLEUS SAMPLING (TOP-P)]
+            #
+            # When generating text, we need a strategy to select the next token from the
+            # probability distribution output by the model.
+            #
+            # 1.  Greedy Sampling (argmax): Simply picking the token with the highest
+            #     probability. This is deterministic and often leads to repetitive, boring,
+            #     and unnatural text. The model gets stuck in loops.
+            #
+            # 2.  Temperature Sampling: We can introduce randomness by "sharpening" or
+            #     "flattening" the probability distribution using a temperature `T`.
+            #     - `T < 1.0`: Sharpens the distribution, making high-probability tokens
+            #       even more likely. A lower temperature leads to more deterministic text.
+            #     - `T > 1.0`: Flattens the distribution, making low-probability tokens
+            #       more likely. A higher temperature leads to more random, creative, but
+            #       also potentially incoherent text.
+            #     - Problem: Temperature sampling can still pick very unlikely tokens if
+            #       the distribution is flat, leading to nonsensical outputs.
+            #
+            # 3.  Top-k Sampling: We restrict the sampling pool to the `k` most likely
+            #     tokens. For example, `k=50` means we only sample from the top 50 words.
+            #     - Problem: The number of "good" next tokens is not constant. In some
+            #       contexts, only a few words make sense (`k` should be small). In others,
+            #       many words could be plausible (`k` should be large). A fixed `k` is
+            #       not adaptive.
+            #
+            # 4.  Nucleus Sampling (Top-p): This is the adaptive solution. Instead of
+            #     picking a fixed number `k` of tokens, we pick the smallest set of tokens
+            #     whose cumulative probability is greater than or equal to a threshold `p`.
+            #     - Example (`p=0.9`): We sort the vocabulary by probability and sum up the
+            #       probabilities until we reach 0.9. This forms our "nucleus" of tokens
+            #       to sample from.
+            #     - Adaptive Nature: If the model is very certain about the next token
+            #       (e.g., `P("the") = 0.95`), the nucleus will be very small, maybe just
+            #       one token. If the model is uncertain and the distribution is flat, the
+            #       nucleus will be much larger, including many plausible options.
+            #
+            # This method strikes a balance between creativity and coherence, preventing
+            # the model from picking bizarre tokens while adapting the size of the
+            # sampling pool to the model's current uncertainty. It has become a standard
+            # for high-quality text generation.
+            # Link: https://arxiv.org/abs/1904.09751
             probs = F.softmax(logits, dim=-1)
             sorted_probs, sorted_indices = torch.sort(probs, descending=True)
             cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
