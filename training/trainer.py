@@ -115,6 +115,16 @@ class Trainer:
 
         # Sanity checks to ensure every parameter is in one of the sets
         param_dict = {pn: p for pn, p in self.model.named_parameters()}
+
+        # Due to weight tying, 'lm_head.weight' is a name for the same parameter
+        # as 'transformer.wte.weight', but only the latter is returned by
+        # .named_parameters(). The optimizer logic incorrectly adds 'lm_head.weight'
+        # to the decay set. We must remove it to avoid a KeyError.
+        # The actual parameter ('transformer.wte.weight') is correctly handled
+        # and placed in the no_decay set as an embedding weight.
+        if 'lm_head.weight' in decay:
+            decay.remove('lm_head.weight')
+
         inter_params = decay & no_decay
         union_params = decay | no_decay
         assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
@@ -183,7 +193,9 @@ class Trainer:
         xb, yb = self.data_manager.get_batch()
 
         with torch.amp.autocast(device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')):
-            _, loss = self.model(xb, yb)
+            # The forward pass now returns logits, loss, and the kv_cache.
+            # For training, we only need the loss.
+            _, loss, _ = self.model(xb, yb)
 
         self.optimizer.zero_grad(set_to_none=True)
         scaler.scale(loss).backward()
