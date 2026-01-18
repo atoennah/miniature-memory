@@ -1,8 +1,12 @@
+# Configuration for benchmarking scripts (benchmark.py and benchmark_inference.py)
+# This file provides a consistent model and batch size for performance measurements.
+
 model:
-  block_size: 256
   n_layer: 6
   n_head: 6
   n_embd: 384
+  block_size: 256
   dropout: 0.2
+
 training:
-  batch_size: 64
+  batch_size: 64 # A larger batch size to better saturate the hardware for benchmarking.
