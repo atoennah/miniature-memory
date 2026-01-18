@@ -356,6 +356,49 @@ class GPT(nn.Module):
 
         return logits, loss
 
+    # [INJECTOR NOTE: THE CRITICAL NEED FOR A KV CACHE INFERENCE OPTIMIZATION]
+    #
+    # The current implementation of the `generate` method is simple and correct, but it is
+    # extremely inefficient. For every single new token generated, it recomputes the
+    # entire attention mechanism for all tokens in the sequence, including all previous
+    # ones. This is computationally wasteful.
+    #
+    # Consider generating the 100th token. The Key (K) and Value (V) matrices for the
+    # first 99 tokens have already been computed in the previous 99 steps. There is no
+    # need to re-calculate them.
+    #
+    # The Solution: The Key-Value (KV) Cache
+    # A KV cache is an optimization that stores the computed K and V tensors from previous
+    # forward passes. When generating the next token, we can reuse these cached tensors
+    # instead of recomputing them.
+    #
+    # How it would be implemented:
+    # 1.  Modify `CausalSelfAttention.forward`:
+    #     - It should accept an optional `past_kv` argument (a tuple of key and value tensors).
+    #     - It should return the newly computed `(k, v)` pair for the current token, along
+    #       with the attention output.
+    #
+    # 2.  Modify `Block.forward`:
+    #     - It needs to accept and thread the `past_kv` cache through to its attention layer.
+    #     - It should return the updated `(k, v)` cache from the attention layer.
+    #
+    # 3.  Modify `GPT.forward`:
+    #     - It would need to manage a list of `past_kv` caches, one for each `Block`.
+    #     - It would pass the appropriate cache to each block in the forward pass.
+    #     - It would return the full, updated cache.
+    #
+    # 4.  Modify `GPT.generate`:
+    #     - Before the generation loop, initialize an empty `past_kv` cache.
+    #     - In the loop, when calling the model, pass in only the *newest* token and the
+    #       `past_kv` cache.
+    #     - The model would then efficiently compute attention for just the new token,
+    #       using the cached keys and values from all previous tokens.
+    #     - Update the `past_kv` cache with the new key and value returned by the model.
+    #
+    # This optimization is not a minor tweak; it is a fundamental architectural change
+    # that can speed up inference by orders of magnitude, transforming the model from a
+    # pedagogical tool into a high-performance generation engine.
+
     @torch.no_grad()
     def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_p: float = 0.9) -> torch.Tensor:
         """
@@ -366,6 +409,42 @@ class GPT(nn.Module):
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
             logits, _ = self(idx_cond)
             logits = logits[:, -1, :] / temperature
+
+            # [INJECTOR: THE THEORY OF TOP-P (NUCLEUS) SAMPLING]
+            #
+            # Standard sampling methods like greedy decoding (always picking the most likely
+            # token) can lead to repetitive and deterministic text. Random sampling from the
+            # entire probability distribution can produce incoherent nonsense. Nucleus sampling
+            # offers a powerful compromise.
+            #
+            # The core idea is to sample from a truncated, dynamically-sized set of the most
+            # probable next tokens, called the "nucleus." This nucleus is defined by a
+            # cumulative probability threshold, `top_p`.
+            #
+            # How it works:
+            # 1.  Sort Tokens by Probability: After calculating the softmax of the logits,
+            #     we sort the vocabulary in descending order of probability.
+            # 2.  Calculate Cumulative Probability: We compute the cumulative sum of these
+            #     sorted probabilities.
+            # 3.  Form the Nucleus: We find the smallest set of tokens whose cumulative
+            #     probability is greater than or equal to `top_p`. All other tokens outside
+            #     this nucleus are discarded.
+            # 4.  Renormalize and Sample: The probabilities of the tokens within the nucleus
+            #     are rescaled so they sum to 1. We then sample from this smaller,
+            #     higher-quality distribution.
+            #
+            # Why is this effective?
+            # -   Adaptability: If the model is very confident about the next token (e.g.,
+            #     after "San Francisco," the probability of "is" is high), the nucleus will
+            #     be very small, leading to a near-deterministic choice. If the model is
+            #     uncertain, the nucleus will be larger, allowing for more creativity and
+            #     diversity while still filtering out the most absurd options.
+            # -   Avoids "Tails": It prevents the model from picking highly improbable tokens
+            #     from the long tail of the probability distribution, which is a common
+            #     source of nonsensical output.
+            #
+            # Link to the original paper ("The Curious Case of Neural Text Degeneration"):
+            # https://arxiv.org/abs/1904.09751
 
             # Top-p (nucleus) sampling
             probs = F.softmax(logits, dim=-1)
