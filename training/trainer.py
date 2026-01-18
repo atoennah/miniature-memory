@@ -37,10 +37,54 @@ import time
 import math
 import torch
 import torch.nn as nn
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from .data_loader import DataManager
 from .model import GPT, GPTConfig
+
+
+def create_optimizer_param_groups(model: nn.Module, weight_decay: float) -> List[Dict[str, Any]]:
+    """Creates optimizer parameter groups with weight decay logic.
+    This function separates the model's parameters into two groups:
+    1.  Parameters subject to weight decay (2D weight matrices).
+    2.  Parameters not subject to weight decay (all other parameters, including
+        biases and LayerNorm weights).
+    The convention to not decay biases and normalization weights is based on
+    best practices for training Transformers. This simple `ndim` based logic
+    is robust, handles tied weights correctly, and is easy to understand.
+    Args:
+        model: The PyTorch model.
+        weight_decay: The value for weight decay.
+    Returns:
+        A list of dictionaries, where each dictionary defines a parameter group
+        and its corresponding weight decay.
+    """
+    decay_params = []
+    no_decay_params = []
+    # Use a set to keep track of parameter ids already added
+    # This is necessary to handle tied weights (e.g., wte and lm_head)
+    added_params = set()
+
+    for param in model.parameters():
+        if not param.requires_grad:
+            continue
+
+        param_id = id(param)
+        if param_id in added_params:
+            continue
+        added_params.add(param_id)
+
+        if param.ndim >= 2:
+            decay_params.append(param)
+        else:
+            no_decay_params.append(param)
+
+    optim_groups = [
+        {'params': decay_params, 'weight_decay': weight_decay},
+        {'params': no_decay_params, 'weight_decay': 0.0}
+    ]
+    return optim_groups
+
 
 class Trainer:
     """
@@ -87,43 +131,13 @@ class Trainer:
         """
         Builds the AdamW optimizer with a sophisticated weight decay strategy.
         This method separates model parameters into two groups: those that will
-        experience weight decay and those that will not. Typically, biases,
-        LayerNorm weights, and Embedding weights are not weight-decayed.
-        This helps prevent overfitting without harming model performance.
+        experience weight decay and those that will not. This is achieved by
+        calling the `create_optimizer_param_groups` helper function.
         Returns:
             torch.optim.Optimizer: The configured AdamW optimizer.
         """
-        decay = set()
-        no_decay = set()
-        whitelist_weight_modules = (torch.nn.Linear, )
-        blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding)
-
-        # Iterate over all named modules and their parameters
-        for mn, m in self.model.named_modules():
-            for pn, p in m.named_parameters():
-                fpn = '%s.%s' % (mn, pn) if mn else pn
-
-                # Biases are never decayed
-                if pn.endswith('bias'):
-                    no_decay.add(fpn)
-                # Weights of linear layers are decayed
-                elif pn.endswith('weight') and isinstance(m, whitelist_weight_modules):
-                    decay.add(fpn)
-                # Weights of LayerNorm and Embedding are not decayed
-                elif pn.endswith('weight') and isinstance(m, blacklist_weight_modules):
-                    no_decay.add(fpn)
-
-        # Sanity checks to ensure every parameter is in one of the sets
-        param_dict = {pn: p for pn, p in self.model.named_parameters()}
-        inter_params = decay & no_decay
-        union_params = decay | no_decay
-        assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
-        assert len(param_dict.keys() - union_params) == 0, "Parameters not in decay/no_decay sets"
-
-        optim_groups = [
-            {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": self.config['training']['weight_decay']},
-            {"params": [param_dict[pn] for pn in sorted(list(no_decay))], "weight_decay": 0.0},
-        ]
+        weight_decay = self.config['training']['weight_decay']
+        optim_groups = create_optimizer_param_groups(self.model, weight_decay)
 
         learning_rate = self.config['training']['learning_rate']
         beta1 = self.config['training']['beta1']
