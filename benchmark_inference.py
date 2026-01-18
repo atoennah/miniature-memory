@@ -4,9 +4,9 @@ import torch
 import yaml
 from training.model import GPT, GPTConfig
 
-def run_benchmark(config_path='training/configs/benchmark.yaml'):
+def run_inference_benchmark(config_path='training/configs/benchmark.yaml'):
     """
-    Benchmarks the training throughput of the GPT model.
+    Benchmarks the inference throughput of the GPT model's generate method.
     """
     # Load configuration from YAML
     with open(config_path, 'r') as f:
@@ -26,45 +26,35 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     )
 
     model = GPT(config)
-    model.eval() # Set to eval mode to disable dropout for benchmark
+    model.eval()
 
     # Generate dummy data
-    batch_size = config_data['training']['batch_size']
-    block_size = model_config['block_size']
-    dummy_input = torch.randint(0, vocab_size, (batch_size, block_size))
-    dummy_target = torch.randint(0, vocab_size, (batch_size, block_size))
-
-    # Benchmark settings
-    num_steps = 20
-    warmup_steps = 5
+    batch_size = 1 # Inference is typically done with a single batch
+    prompt = torch.randint(0, vocab_size, (batch_size, 10)) # A short prompt
+    max_new_tokens = 100
 
     # Warmup phase
-    for _ in range(warmup_steps):
-        # The forward pass now returns a third value, the kv_cache, which is not needed for this benchmark.
-        _, _, _ = model(dummy_input, dummy_target)
+    _ = model.generate(prompt, max_new_tokens=5)
 
     # Benchmark phase
     start_time = time.time()
-    for _ in range(num_steps):
-        _, _, _ = model(dummy_input, dummy_target)
+    _ = model.generate(prompt, max_new_tokens=max_new_tokens)
     end_time = time.time()
 
     # Calculate throughput
     total_time = end_time - start_time
-    tokens_per_step = batch_size * block_size
-    total_tokens = num_steps * tokens_per_step
+    total_tokens = batch_size * max_new_tokens
     tokens_per_second = total_tokens / total_time
 
-    print(f"--- Benchmark Results ---")
+    print(f"--- Inference Benchmark Results ---")
     print(f"Configuration: {config_path}")
-    print(f"Steps: {num_steps}")
     print(f"Batch Size: {batch_size}")
-    print(f"Block Size: {block_size}")
+    print(f"New Tokens Generated: {max_new_tokens}")
     print(f"Total Tokens: {total_tokens}")
     print(f"Total Time: {total_time:.2f} seconds")
     print(f"Throughput: {tokens_per_second:.2f} tokens/sec")
-    print(f"-----------------------")
+    print(f"---------------------------------")
     return tokens_per_second
 
 if __name__ == "__main__":
-    run_benchmark()
+    run_inference_benchmark()
