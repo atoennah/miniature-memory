@@ -113,6 +113,19 @@ class Trainer:
                 elif pn.endswith('weight') and isinstance(m, blacklist_weight_modules):
                     no_decay.add(fpn)
 
+        # [INJECTOR: BOLT'S FIX FOR TIED WEIGHTS]
+        # The 'lm_head.weight' is tied to the token embedding table.
+        # The optimizer construction logic was trying to add it to the 'decay'
+        # group, but it's already (correctly) in the 'no_decay' group via the
+        # embedding layer. This was causing a KeyError because the same parameter
+        # can't be in two places.
+        #
+        # By explicitly removing 'lm_head.weight' from the decay set, we ensure
+        # that the optimizer configuration is valid and respects the tied-weights
+        # architecture. This is a surgical fix that addresses the root cause.
+        if 'lm_head.weight' in decay:
+            decay.remove('lm_head.weight')
+
         # Sanity checks to ensure every parameter is in one of the sets
         param_dict = {pn: p for pn, p in self.model.named_parameters()}
         inter_params = decay & no_decay

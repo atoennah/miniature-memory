@@ -136,3 +136,7 @@ cython_debug/
 /dataset/processed/
 /dataset/rejected/
 /training/checkpoints/
+
+# Ignore all training output directories to prevent committing model artifacts.
+out/
+out-*/
