@@ -136,3 +136,4 @@ cython_debug/
 /dataset/processed/
 /dataset/rejected/
 /training/checkpoints/
+\nout-shakespeare/

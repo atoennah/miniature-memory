@@ -1,0 +1,62 @@
+\n--- SAMPLE 1 ---\n
+Generating 100 tokens from prompt: ' '
+------------------------------
+ isenot spo dendemeas.
+She
+Surat ase
+I'te pois
+"
+Fand sthe.
+Tus
+I'res.
+I t uresungiontong, Ithave
+I b
+------------------------------
+Performance Metrics:
+  - Peak RAM Usage: 429.63 MB
+  - Initial RAM:    415.63 MB
+  - Generation Time:  1.14 seconds
+  - Tokens per Second: 87.89
+\n--- SAMPLE 2 ---\n
+Generating 100 tokens from prompt: ' '
+------------------------------
+ otow aru a tasite e daariastiamangal i i huraye te tay balaasosorokant stelalartayangaray wubirkeada
+------------------------------
+Performance Metrics:
+  - Peak RAM Usage: 429.61 MB
+  - Initial RAM:    415.49 MB
+  - Generation Time:  1.43 seconds
+  - Tokens per Second: 70.15
+\n--- SAMPLE 3 ---\n
+Generating 100 tokens from prompt: ' '
+------------------------------
+ flld I tadior wyt t the mere. fos k I byr t'scoudand. drnd y herasins wan sery ternganin fund by Tit
+------------------------------
+Performance Metrics:
+  - Peak RAM Usage: 429.86 MB
+  - Initial RAM:    415.61 MB
+  - Generation Time:  1.21 seconds
+  - Tokens per Second: 82.52
+\n--- SAMPLE 4 ---\n
+Generating 100 tokens from prompt: ' '
+------------------------------
+ clo rino. loresindoverace.
+Whatives ly.
+End p Alitspareangont athend les t s on oomomo ishas hay.
+Co
+------------------------------
+Performance Metrics:
+  - Peak RAM Usage: 429.74 MB
+  - Initial RAM:    415.62 MB
+  - Generation Time:  1.11 seconds
+  - Tokens per Second: 89.93
+\n--- SAMPLE 5 ---\n
+Generating 100 tokens from prompt: ' '
+------------------------------
+ rrangi misahas asis puabate holiovanires pupulayas bu arerantusuderyeratakisugiandat pamialo te rtun
+------------------------------
+Performance Metrics:
+  - Peak RAM Usage: 429.62 MB
+  - Initial RAM:    415.62 MB
+  - Generation Time:  1.15 seconds
+  - Tokens per Second: 87.14

@@ -1,0 +1,40 @@
+# A small config for testing, restructured for clarity and compatibility.
+data:
+  path: 'dataset/processed/train.txt' # Default path, can be overridden.
+  dataset: shakespeare # Legacy, for reference.
+model:
+  n_layer: 6
+  n_head: 6
+  n_embd: 384
+  block_size: 256  # context of up to 256 previous characters
+  dropout: 0.2
+training:
+  output_dir: 'out-shakespeare'
+  eval_interval: 100
+  log_interval: 10
+  eval_iters: 200
+  always_save_checkpoint: False
+  # Optimizer params
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-1
+  beta1: 0.9
+  beta2: 0.99 # Make a bit bigger because number of tokens per iter is small
+  grad_clip: 1.0
+  # Learning rate decay settings
+  decay_lr: True
+  warmup_iters: 100
+  lr_decay_iters: 500
+  min_lr: 1.0e-4
+  # Training loop
+  batch_size: 32 # Power of 2 for efficiency
+  gradient_accumulation_steps: 1
+  max_steps: 100
+# W&B logging
+wandb:
+  log: False
+  project: 'shakespeare'
+  run_name: 'mini-gpt'
+# Inference params
+inference:
+  temperature: 1.0
+  top_p: 0.9

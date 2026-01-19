@@ -1,0 +1,53 @@
+\n--- SAMPLE 1 ---\n
+Generating 100 tokens from prompt: ' '
+------------------------------
+  u. ar ie qia lrey5jaexaayyVtmrrrue Howr dc b vinty ma ct ttdoeee,vrasrrrs Ri,mo aza.enp(sfade,eteda
+------------------------------
+Performance Metrics:
+  - Peak RAM Usage: 428.55 MB
+  - Initial RAM:    414.80 MB
+  - Generation Time:  1.20 seconds
+  - Tokens per Second: 83.28
+\n--- SAMPLE 2 ---\n
+Generating 100 tokens from prompt: ' '
+------------------------------
+  ro eztp cadaozu  aJwHhw mCe us hRl ta s opaoyanb tnenoeidndomen ysP t,emil J m hsmz pzah cdalaia px
+------------------------------
+Performance Metrics:
+  - Peak RAM Usage: 428.48 MB
+  - Initial RAM:    414.61 MB
+  - Generation Time:  1.60 seconds
+  - Tokens per Second: 62.43
+\n--- SAMPLE 3 ---\n
+Generating 100 tokens from prompt: ' '
+------------------------------
+ oyoSoFsao5  aaoosniHloo sactmadmzd a ) i riv
+Hd |e Xya tia nnaao mou hetiaJw lnl psxeIrUi le2 r mt)l
+------------------------------
+Performance Metrics:
+  - Peak RAM Usage: 428.48 MB
+  - Initial RAM:    414.73 MB
+  - Generation Time:  1.33 seconds
+  - Tokens per Second: 75.22
+\n--- SAMPLE 4 ---\n
+Generating 100 tokens from prompt: ' '
+------------------------------
+ uvu a e pimeadR ,a ebwXathe tplabes zj 6a siueRotaeaP g(e.aeinon'oWt )
+ai a la aye tne hveRdoamee L
+------------------------------
+Performance Metrics:
+  - Peak RAM Usage: 428.36 MB
+  - Initial RAM:    414.49 MB
+  - Generation Time:  1.03 seconds
+  - Tokens per Second: 96.64
+\n--- SAMPLE 5 ---\n
+Generating 100 tokens from prompt: ' '
+------------------------------
+ s(okn s t.on e Ro(nser caatsz pe ae soti gefa
+e. egbu  ma.s.na llV r pf,e.uw s d d riOneerese yas ha
+------------------------------
+Performance Metrics:
+  - Peak RAM Usage: 428.62 MB
+  - Initial RAM:    414.62 MB
+  - Generation Time:  1.03 seconds
+  - Tokens per Second: 97.21

@@ -98,10 +98,18 @@ class Trainer:
         whitelist_weight_modules = (torch.nn.Linear, )
         blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding)
 
+        # Create a dictionary of all unique, named parameters to handle tied weights correctly.
+        param_dict = {pn: p for pn, p in self.model.named_parameters()}
+
         # Iterate over all named modules and their parameters
         for mn, m in self.model.named_modules():
             for pn, p in m.named_parameters():
                 fpn = '%s.%s' % (mn, pn) if mn else pn
+
+                if fpn not in param_dict:
+                    # Skip parameters that are not in the unique parameter dictionary,
+                    # such as tied weights (e.g., lm_head.weight).
+                    continue
 
                 # Biases are never decayed
                 if pn.endswith('bias'):
@@ -112,9 +120,6 @@ class Trainer:
                 # Weights of LayerNorm and Embedding are not decayed
                 elif pn.endswith('weight') and isinstance(m, blacklist_weight_modules):
                     no_decay.add(fpn)
-
-        # Sanity checks to ensure every parameter is in one of the sets
-        param_dict = {pn: p for pn, p in self.model.named_parameters()}
         inter_params = decay & no_decay
         union_params = decay | no_decay
         assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
