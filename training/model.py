@@ -357,12 +357,85 @@ class GPT(nn.Module):
         return logits, loss
 
     @torch.no_grad()
+    # [INJECTOR: THE THEORY OF TOP-P (NUCLEUS) SAMPLING]
+    #
+    # Generating text from a language model is a delicate balance between coherence and
+    # creativity. Several decoding strategies exist, each with its own trade-offs:
+    #
+    # 1.  Greedy Decoding: Always pick the token with the highest probability.
+    #     - Pro: Safe, coherent, predictable.
+    #     - Con: Extremely repetitive, boring, and deterministic. It gets stuck in loops.
+    #
+    # 2.  Temperature Sampling: "Soften" the probability distribution by dividing the logits
+    #     by a temperature value (T).
+    #     - T > 1.0: Increases randomness, more creative but also more prone to errors.
+    #     - 0 < T < 1.0: Increases confidence, closer to greedy, less creative.
+    #     - Con: The set of "good" tokens (the vocabulary) is fixed. Temperature can't
+    #       dynamically shrink the candidate pool; it just reshapes their probabilities.
+    #       A very low-probability (but disastrous) token still has a non-zero chance.
+    #
+    # 3.  Top-k Sampling: Consider only the top `k` most likely tokens and re-normalize
+    #     the probabilities among them.
+    #     - Pro: Prevents truly terrible tokens from being chosen.
+    #     - Con: The number `k` is static. Sometimes the true distribution of "good"
+    #       next tokens is very sharp (only a few are plausible), and sometimes it is
+    #       very flat (many are plausible). A fixed `k` can't adapt to this.
+    #
+    # 4.  Top-p (Nucleus) Sampling (This implementation):
+    #     This is the adaptive approach. Instead of picking a fixed number `k` of tokens,
+    #     we pick the smallest set of tokens whose cumulative probability is greater than
+    #     or equal to a threshold `p`.
+    #
+    #     - How it works:
+    #       a. Sort all vocabulary tokens by their probability in descending order.
+    #       b. Sum their probabilities cumulatively until the sum reaches `p`.
+    #       c. The set of tokens included in this sum forms the "nucleus".
+    #       d. Re-normalize the probabilities among the tokens in the nucleus and sample
+    #          from this smaller, more plausible set.
+    #
+    #     - Why it's better: The size of the nucleus is dynamic. If the model is very
+    #       confident about the next token (e.g., after "San Francisco," the token "is"
+    #       might have 95% probability), the nucleus might only contain 1 or 2 tokens.
+    #       If the model is uncertain (e.g., at the beginning of a story), the nucleus
+    #       will be much larger, allowing for more creativity. It adapts the size of the
+    #       candidate pool based on the model's own uncertainty, giving the best of
+    #       both worlds.
+    #     - Paper: "The Curious Case of Neural Text Degeneration" (https://arxiv.org/abs/1904.09751)
     def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_p: float = 0.9) -> torch.Tensor:
         """
         Autoregressively generates a sequence of tokens using top-p (nucleus) sampling.
         """
         self.eval()
         for _ in range(max_new_tokens):
+            # [INJECTOR NOTE: THE CRITICAL BOTTLENECK OF NAIVE INFERENCE]
+            #
+            # The current implementation of this loop is pedagogically clear but
+            # computationally inefficient. For every single token we generate, we are
+            # performing a full forward pass of the model on the *entire* sequence of
+            # preceding tokens (`idx_cond`).
+            #
+            # Let's analyze the complexity:
+            # - The attention calculation is roughly O(T^2), where T is sequence length.
+            # - In this loop, T grows by 1 at each step.
+            # - This means we are computing O(1^2 + 2^2 + 3^2 + ... + N^2), which is O(N^3)
+            #   in total for N new tokens. This is prohibitively slow.
+            #
+            # The Solution: The Key-Value (KV) Cache
+            # The Transformer architecture has a beautiful property: the Keys (K) and
+            # Values (V) for all previous tokens in the self-attention mechanism do not
+            # need to be recomputed. They remain the same.
+            #
+            # A KV Cache is a data structure that stores the calculated K and V tensors
+            # from previous forward passes. In each new generation step, we only need to:
+            # 1.  Perform a forward pass on the *single new token* to get its Query (Q),
+            #     Key (K), and Value (V).
+            # 2.  Append the new K and V to our cache.
+            # 3.  Perform the attention calculation using the new Q and the *entire cached*
+            #     K and V.
+            #
+            # This changes the complexity from O(N^3) to O(N * T_initial), a massive
+            # performance gain. Implementing a KV Cache is the single most important
+            # optimization for making language model inference fast.
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
             logits, _ = self(idx_cond)
             logits = logits[:, -1, :] / temperature
