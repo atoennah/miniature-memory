@@ -15,7 +15,8 @@ This repository is managed with a strong focus on clear, centralized documentati
 -   **To understand *how* to contribute and use the pipeline:**
     -   **[DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md):** The essential guide for all contributors. Contains setup instructions, a full data pipeline walkthrough, and training commands. **Start here.**
 
--   **To understand the project's governance and *why* decisions are made:**
+-   **To understand the project's architecture, governance, and *why* decisions are made:**
+    -   **[ARCHITECTURE.md](ARCHITECTURE.md):** A high-level overview of the system design and data flow. **Recommended first read.**
     -   **[.jules/AGENTS.md](.jules/AGENTS.md):** Defines the roles and governance model for all agents and contributors.
     -   **[.jules/ROADMAP.md](.jules/ROADMAP.md):** The long-term vision and development phases.
     -   **[.jules/BOLT_JOURNAL.md](.jules/BOLT_JOURNAL.md):** A scientific log of all major architectural decisions and performance benchmarks.

@@ -18,6 +18,8 @@ This will install `torch`, `pyyaml`, `psutil`, and other essential libraries.
 
 ## 2. Core Project Structure
 
+Before diving into the file-level structure, it is highly recommended to read the **[ARCHITECTURE.md](ARCHITECTURE.md)** for a high-level overview of the system's design and data flow.
+
 Understanding the repository layout is key to contributing effectively.
 
 ```
