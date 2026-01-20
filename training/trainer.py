@@ -120,9 +120,13 @@ class Trainer:
         assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
         assert len(param_dict.keys() - union_params) == 0, "Parameters not in decay/no_decay sets"
 
+        # Filter the decay sets to ensure they only contain parameters present in the optimizer's parameter dictionary
+        decay_params = [param_dict[pn] for pn in sorted(list(decay)) if pn in param_dict]
+        no_decay_params = [param_dict[pn] for pn in sorted(list(no_decay)) if pn in param_dict]
+
         optim_groups = [
-            {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": self.config['training']['weight_decay']},
-            {"params": [param_dict[pn] for pn in sorted(list(no_decay))], "weight_decay": 0.0},
+            {"params": decay_params, "weight_decay": self.config['training']['weight_decay']},
+            {"params": no_decay_params, "weight_decay": 0.0},
         ]
 
         learning_rate = self.config['training']['learning_rate']

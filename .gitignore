@@ -136,3 +136,6 @@ cython_debug/
 /dataset/processed/
 /dataset/rejected/
 /training/checkpoints/
+
+# Model training outputs
+out-*/
