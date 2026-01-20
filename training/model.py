@@ -136,7 +136,7 @@ class CausalSelfAttention(nn.Module):
         self.n_embd = config.n_embd
         self.dropout = config.dropout
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """Forward pass for the causal self-attention module."""
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
@@ -182,8 +182,41 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
+        # [INJECTOR: KV CACHE MECHANICS]
+        #
+        # During autoregressive generation, the Key (K) and Value (V) tensors for all
+        # previous tokens remain constant. Re-computing them for every new token is a
+        # massive waste of computation. The KV Cache is a simple yet powerful
+        # optimization that stores these past K and V tensors.
+        #
+        # The process is as follows:
+        # 1.  On the first pass (the "prefill" step), when `kv_cache` is `None`, we
+        #     compute K and V for the entire input prompt and return them.
+        # 2.  On all subsequent passes (the "generation" steps), we receive the cached
+        #     K and V from the previous step. We compute the K and V for *only the
+        #     newest token* and concatenate them to the cached tensors.
+        #
+        # This changes the attention calculation from being quadratic in the sequence
+        # length (`T*T`) for every step to being linear (`T*1`), resulting in a
+        # dramatic speedup for inference.
+        if kv_cache is not None:
+            # Append new keys and values to the cache
+            past_k, past_v = kv_cache
+            k = torch.cat((past_k, k), dim=2)
+            v = torch.cat((past_v, v), dim=2)
+        present_kv_cache = (k, v)
+
         # Causal self-attention using PyTorch's fused kernel
-        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+        # When using a KV cache, the query is only for the new token(s), while keys/values are for the full sequence.
+        # The `is_causal` flag is not needed here as the q, k, v setup handles causality implicitly.
+        # For prefill, `is_causal=True` is critical. For generation, it is not.
+        # However, `scaled_dot_product_attention` is smart enough that with a KV cache, it's more efficient
+        # to just let it handle the full K/V tensors without a causal mask. For simplicity and since we
+        # only have one new query token in generation, we can rely on the Q/K/V shapes.
+        # Let's be explicit for clarity: during generation, T_q=1, T_kv=T_past + 1.
+        # Let's keep `is_causal=True` for correctness during the prefill stage.
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=T>1)
+
 
         # Re-assemble all head outputs side by side
         # (B, nh, T, hs) -> (B, T, nh, hs) -> (B, T, C)
@@ -191,7 +224,7 @@ class CausalSelfAttention(nn.Module):
 
         # Output projection
         y = self.resid_dropout(self.c_proj(y))
-        return y
+        return y, present_kv_cache
 
 class Block(nn.Module):
     # [INJECTOR: THE ARCHITECTURE OF A TRANSFORMER BLOCK]
@@ -229,11 +262,12 @@ class Block(nn.Module):
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = FeedForward(config)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """Forward pass for a Transformer block."""
-        x = x + self.attn(self.ln_1(x))
+        attn_output, present_kv_cache = self.attn(self.ln_1(x), kv_cache=kv_cache)
+        x = x + attn_output
         x = x + self.mlp(self.ln_2(x))
-        return x
+        return x, present_kv_cache
 
 class GPT(nn.Module):
     """A GPT-style transformer model."""
@@ -330,7 +364,11 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def forward(self,
+                idx: torch.Tensor,
+                targets: Optional[torch.Tensor] = None,
+                kv_cache: Optional[list[Tuple[torch.Tensor, torch.Tensor]]] = None
+                ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[list[Tuple[torch.Tensor, torch.Tensor]]]]:
         """Forward pass for the GPT model."""
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
@@ -342,8 +380,10 @@ class GPT(nn.Module):
         x = self.transformer.drop(tok_emb + pos_emb)
 
         # Transformer blocks
-        for block in self.transformer.h:
-            x = block(x)
+        present_kv_cache = []
+        for i, block in enumerate(self.transformer.h):
+            x, cache = block(x, kv_cache=kv_cache[i] if kv_cache is not None else None)
+            present_kv_cache.append(cache)
 
         # Final layer norm and language model head
         x = self.transformer.ln_f(x)
@@ -354,7 +394,7 @@ class GPT(nn.Module):
             # if we are given some desired targets also calculate the loss
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
-        return logits, loss
+        return logits, loss, present_kv_cache
 
     @torch.no_grad()
     def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_p: float = 0.9) -> torch.Tensor:
@@ -362,9 +402,20 @@ class GPT(nn.Module):
         Autoregressively generates a sequence of tokens using top-p (nucleus) sampling.
         """
         self.eval()
+        kv_cache = None
         for _ in range(max_new_tokens):
-            idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
-            logits, _ = self(idx_cond)
+            # When using a KV cache, we can process the prompt in one go (prefill)
+            # and then process one token at a time.
+            if kv_cache is None:
+                # Prefill step
+                idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+                logits, _, kv_cache = self(idx_cond)
+            else:
+                # Generation step
+                idx_cond = idx[:, -1:] # Only the newest token
+                logits, _, kv_cache = self(idx_cond, kv_cache=kv_cache)
+
+
             logits = logits[:, -1, :] / temperature
 
             # Top-p (nucleus) sampling
