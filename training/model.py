@@ -360,14 +360,80 @@ class GPT(nn.Module):
     def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_p: float = 0.9) -> torch.Tensor:
         """
         Autoregressively generates a sequence of tokens using top-p (nucleus) sampling.
+
+        [INJECTOR NOTE: THE CRITICAL NEED FOR A KV CACHE]
+
+        This current implementation of `generate` is simple, but it is also extremely
+        inefficient. For every single token it generates, it re-computes the entire
+        attention mechanism for all previous tokens.
+
+        Example:
+        - To generate token 101, it processes the first 100 tokens.
+        - To generate token 102, it processes the first 101 tokens.
+        - To generate token 103, it processes the first 102 tokens.
+
+        The computation is O(N^2) where N is the sequence length. This is a massive
+        waste of computation, as the Key (K) and Value (V) projections for the first
+        100 tokens are identical in every single step.
+
+        The Solution: The Key-Value (KV) Cache
+
+        A KV Cache is a simple but powerful optimization. We store the calculated K and V
+        tensors from the attention layers for all the initial prompt tokens. Then, when
+        generating a new token, we only need to compute the K and V for that *single* new
+        token and append them to our cache. The attention mechanism can then use this
+        cache to calculate the next token's logits without re-computing everything from
+        scratch.
+
+        This changes the complexity of generation from O(N^2) to O(N), resulting in a
+        dramatic, often order-of-magnitude, speedup for inference. Implementing a KV
+        Cache is the single most important architectural change for making this model
+        practical for real-world use.
         """
         self.eval()
         for _ in range(max_new_tokens):
+            # [INJECTOR NOTE]: This slicing operation `idx[:, -self.config.block_size:]`
+            # is a functional, but inefficient, workaround for the missing KV Cache. It
+            # prevents the model from crashing when the sequence length exceeds the
+            # block size, but it does so by discarding past context, which harms the
+            # model's coherence. It is a temporary fix, not a solution.
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
             logits, _ = self(idx_cond)
             logits = logits[:, -1, :] / temperature
 
-            # Top-p (nucleus) sampling
+            # [INJECTOR: THE THEORY OF TOP-P (NUCLEUS) SAMPLING]
+            #
+            # Standard sampling from a language model's output distribution can be risky.
+            # If we simply take the most likely token (greedy sampling), the output can
+            # become repetitive and dull. If we sample from the entire distribution, we
+            # risk picking bizarre or nonsensical tokens, especially if the "long tail"
+            # of the distribution is flat.
+            #
+            # Top-p sampling (also known as Nucleus Sampling) offers a sophisticated
+            # compromise. Instead of considering a fixed number of top tokens (Top-k),
+            # it considers the smallest possible set of tokens whose cumulative
+            # probability is greater than or equal to a threshold `p`.
+            #
+            # The algorithm is as follows:
+            # 1.  Sort the vocabulary tokens by their predicted probability in descending
+            #     order.
+            # 2.  Calculate the cumulative sum of these probabilities.
+            # 3.  Find the tokens that are part of the "nucleus" – the smallest set whose
+            #     cumulative probability exceeds `top_p`.
+            # 4.  "Zero out" all other tokens, effectively removing them from consideration.
+            # 5.  Renormalize the probabilities of the remaining tokens so they sum to 1.
+            # 6.  Sample from this new, smaller, and safer distribution.
+            #
+            # Why is this so effective?
+            # The size of the nucleus is *dynamic*. In high-confidence situations, where
+            # the model is very sure about the next token (e.g., after "President of the
+            # United States, Joe..."), the nucleus might be very small (just "Biden").
+            # In low-confidence situations, where many tokens are plausible (e.g., at
+            # the beginning of a story), the nucleus will be much larger, allowing for
+            # more creativity. This adaptability makes the generated text feel more
+            # natural and intelligent.
+            #
+            # Link to the original paper: https://arxiv.org/abs/1904.09751
             probs = F.softmax(logits, dim=-1)
             sorted_probs, sorted_indices = torch.sort(probs, descending=True)
             cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
