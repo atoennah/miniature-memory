@@ -37,7 +37,7 @@ import math
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 class GPTConfig:
     """Configuration for the GPT model."""
@@ -136,7 +136,7 @@ class CausalSelfAttention(nn.Module):
         self.n_embd = config.n_embd
         self.dropout = config.dropout
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None, use_cache: bool = False) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         """Forward pass for the causal self-attention module."""
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
@@ -182,6 +182,14 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
+        present_kv = None
+        if use_cache:
+            if past_kv is not None:
+                past_key, past_value = past_kv
+                k = torch.cat((past_key, k), dim=-2)
+                v = torch.cat((past_value, v), dim=-2)
+            present_kv = (k, v)
+
         # Causal self-attention using PyTorch's fused kernel
         y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
 
@@ -191,7 +199,7 @@ class CausalSelfAttention(nn.Module):
 
         # Output projection
         y = self.resid_dropout(self.c_proj(y))
-        return y
+        return y, present_kv
 
 class Block(nn.Module):
     # [INJECTOR: THE ARCHITECTURE OF A TRANSFORMER BLOCK]
@@ -229,11 +237,12 @@ class Block(nn.Module):
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = FeedForward(config)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None, use_cache: bool = False) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         """Forward pass for a Transformer block."""
-        x = x + self.attn(self.ln_1(x))
+        attn_output, present_kv = self.attn(self.ln_1(x), past_kv=past_kv, use_cache=use_cache)
+        x = x + attn_output
         x = x + self.mlp(self.ln_2(x))
-        return x
+        return x, present_kv
 
 class GPT(nn.Module):
     """A GPT-style transformer model."""
@@ -330,7 +339,7 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None, past_kv_cache: Optional[list] = None, use_cache: bool = False) -> Union[Tuple[torch.Tensor, Optional[torch.Tensor]], Tuple[torch.Tensor, Optional[torch.Tensor], Optional[list]]]:
         """Forward pass for the GPT model."""
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
@@ -341,9 +350,15 @@ class GPT(nn.Module):
         pos_emb = self.transformer.wpe(pos)
         x = self.transformer.drop(tok_emb + pos_emb)
 
+        present_kv_cache = [] if use_cache else None
+        if use_cache and past_kv_cache is None:
+            past_kv_cache = [None] * len(self.transformer.h)
+
         # Transformer blocks
-        for block in self.transformer.h:
-            x = block(x)
+        for i, block in enumerate(self.transformer.h):
+            x, present_kv = block(x, past_kv=past_kv_cache[i] if past_kv_cache else None, use_cache=use_cache)
+            if present_kv_cache is not None:
+                present_kv_cache.append(present_kv)
 
         # Final layer norm and language model head
         x = self.transformer.ln_f(x)
@@ -354,17 +369,29 @@ class GPT(nn.Module):
             # if we are given some desired targets also calculate the loss
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
+        if use_cache:
+            return logits, loss, present_kv_cache
         return logits, loss
 
     @torch.no_grad()
     def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_p: float = 0.9) -> torch.Tensor:
         """
-        Autoregressively generates a sequence of tokens using top-p (nucleus) sampling.
+        Autoregressively generates a sequence of tokens using top-p (nucleus) sampling and KV caching.
         """
         self.eval()
+        past_kv_cache = None
+
         for _ in range(max_new_tokens):
-            idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
-            logits, _ = self(idx_cond)
+            # On the first iteration, we process the entire prompt (prefill).
+            # On subsequent iterations, we only process the last generated token.
+            if past_kv_cache:
+                idx_cond = idx[:, -1:]
+            else:
+                idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+
+            # Forward the model to get the logits for the index in the sequence
+            logits, _, past_kv_cache = self(idx_cond, past_kv_cache=past_kv_cache, use_cache=True)
+            # Pluck the logits at the final step and scale by desired temperature
             logits = logits[:, -1, :] / temperature
 
             # Top-p (nucleus) sampling
