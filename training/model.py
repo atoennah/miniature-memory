@@ -361,6 +361,41 @@ class GPT(nn.Module):
         """
         Autoregressively generates a sequence of tokens using top-p (nucleus) sampling.
         """
+        # [INJECTOR: THE ART & SCIENCE OF CONTROLLED GENERATION]
+        #
+        # Generating text is not a deterministic process. If we always chose the token with
+        # the highest probability (greedy decoding), the model would produce repetitive and
+        # lifeless text. The magic lies in introducing controlled randomness. This is achieved
+        # through a combination of two key techniques: Temperature Scaling and Top-p Sampling.
+        #
+        # 1.  Temperature Scaling:
+        #     -   `logits = logits / temperature`
+        #     -   Temperature controls the "peakedness" of the probability distribution.
+        #     -   `temperature` < 1.0: Makes the distribution sharper, increasing the
+        #         probability of the most likely tokens. This makes the model more confident
+        #         and conservative, but also less creative. Good for tasks requiring precision.
+        #     -   `temperature` > 1.0: Makes the distribution flatter, giving more weight to
+        #         less likely tokens. This encourages creativity and diversity, but at the
+        #         risk of generating less coherent or sensical text.
+        #     -   `temperature` = 1.0: The "vanilla" softmax output, no change.
+        #
+        # 2.  Top-p (Nucleus) Sampling:
+        #     -   This is a more sophisticated sampling strategy than its predecessor, Top-k.
+        #     -   Top-k Sampling: Simply samples from the `k` most likely tokens. The problem
+        #         is that the number of "good" next tokens is not constant. In some contexts,
+        #         only a few words make sense (a small, sharp distribution). In others, many
+        #         words could be plausible (a flat, wide distribution). A fixed `k` is not
+        #         adaptive to this change.
+        #     -   Top-p Sampling: Instead of a fixed number `k`, we define a cumulative
+        #         probability mass `p` (e.g., 0.9). We then sort the vocabulary by probability
+        #         and sum up the probabilities until we reach `p`. The set of tokens included
+        #         in this sum is our "nucleus". We then sample from this nucleus.
+        #     -   Why is this better? The size of the nucleus is *dynamic*. When the model is
+        #         very certain about the next token (sharp distribution), the nucleus might
+        #         only contain 1 or 2 tokens. When the model is uncertain (flat distribution),
+        #         the nucleus will be much larger, allowing for more diverse choices. This
+        #         adapts the level of randomness to the model's own confidence at each step,
+        #         producing more natural and coherent text.
         self.eval()
         for _ in range(max_new_tokens):
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
