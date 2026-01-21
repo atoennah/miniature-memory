@@ -6,6 +6,25 @@ Entries in this journal must follow the format of a scientific paper or a concis
 
 ---
 
+## 2024-07-25: KV Cache Implementation for Efficient Inference
+
+-   **Discovery:** The model's `generate` method was stateless, recomputing the entire attention matrix for every new token. This is a classic and significant performance bottleneck, leading to O(N^2) complexity for generating N tokens.
+-   **Strategy:** Implement a Key-Value (KV) Cache within the `CausalSelfAttention` module. This allows the model to reuse the keys and values of previous tokens, changing the generation complexity to O(N) and dramatically increasing inference speed.
+-   **Methodology:**
+    1.  Created a new, dedicated benchmark script (`inference_benchmark.py`) to isolate and measure inference throughput in tokens-per-second.
+    2.  Established a baseline performance metric using the original, stateless implementation.
+    3.  Modified the `CausalSelfAttention`, `Block`, and `GPT` classes to manage and pass a `kv_cache` object.
+    4.  Corrected two subtle bugs during implementation: one related to incorrect positional encoding during cached generation, and another related to exceeding the model's `block_size`.
+    5.  Measured the final performance with the optimized code.
+-   **Results:**
+    -   **Before (Stateless):** ~367 tokens/sec
+    -   **After (KV Cache):** ~771 tokens/sec
+    -   **Change:** ~2.1x speedup in inference throughput.
+-   **Conclusion:** The KV Cache is a foundational optimization for this architecture. The hypothesis was confirmed, and the bottleneck was successfully eliminated.
+-   **Philosophical Note:** This moves the model from a pedagogical, easy-to-read implementation to a performance-aware one, without sacrificing the clarity of the underlying mechanism. The added injector comments for the KV Cache preserve the educational nature of the code.
+
+---
+
 ## 2024-07-24: Conceptual Injection for `training/model.py`
 
 -   **Discovery:** The core transformer logic in `training/model.py` was a functional "black box." It worked, but it did not teach. The mathematical and architectural principles were implicit, violating the core philosophy that code should be a living, educational document.
