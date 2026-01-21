@@ -136,7 +136,7 @@ class CausalSelfAttention(nn.Module):
         self.n_embd = config.n_embd
         self.dropout = config.dropout
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """Forward pass for the causal self-attention module."""
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
@@ -182,8 +182,18 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
+        # [BOLT ⚡ KV CACHE]: If a cache is provided, concatenate the new keys and values.
+        if kv_cache is not None:
+            cached_k, cached_v = kv_cache
+            k = torch.cat((cached_k, k), dim=2)
+            v = torch.cat((cached_v, v), dim=2)
+
+        # The causal flag is only needed for the initial prompt processing (when T > 1)
+        is_causal = T > 1
+
         # Causal self-attention using PyTorch's fused kernel
-        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+        # Note: When T=1 (during generation), is_causal=False, as the query attends to the full history in k,v.
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=is_causal)
 
         # Re-assemble all head outputs side by side
         # (B, nh, T, hs) -> (B, T, nh, hs) -> (B, T, C)
@@ -191,7 +201,7 @@ class CausalSelfAttention(nn.Module):
 
         # Output projection
         y = self.resid_dropout(self.c_proj(y))
-        return y
+        return y, (k, v)
 
 class Block(nn.Module):
     # [INJECTOR: THE ARCHITECTURE OF A TRANSFORMER BLOCK]
@@ -229,11 +239,13 @@ class Block(nn.Module):
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = FeedForward(config)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """Forward pass for a Transformer block."""
-        x = x + self.attn(self.ln_1(x))
+        # [BOLT ⚡ KV CACHE]: Pass the cache to the attention layer and get the updated one back.
+        attn_output, new_kv_cache = self.attn(self.ln_1(x), kv_cache=kv_cache)
+        x = x + attn_output
         x = x + self.mlp(self.ln_2(x))
-        return x
+        return x, new_kv_cache
 
 class GPT(nn.Module):
     """A GPT-style transformer model."""
@@ -330,20 +342,34 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None, kv_cache: Optional[list] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[list]]:
         """Forward pass for the GPT model."""
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        pos = self.pos[:, :t]
+
+        # [BOLT ⚡ KV CACHE]: Adjust position embeddings based on the cache.
+        # If we have a cache, we are generating a new token, so the position is the length of the cache.
+        if kv_cache is not None:
+            # The first cache tensor k has shape (B, nh, T_cached, hs)
+            seq_len_offset = kv_cache[0][0].size(2)
+            pos = self.pos[:, seq_len_offset:seq_len_offset + t]
+        else:
+            # No cache, processing the initial prompt.
+            pos = self.pos[:, :t]
+
 
         # Token and position embeddings
         tok_emb = self.transformer.wte(idx)
         pos_emb = self.transformer.wpe(pos)
         x = self.transformer.drop(tok_emb + pos_emb)
 
+        new_kv_cache = []
         # Transformer blocks
-        for block in self.transformer.h:
-            x = block(x)
+        for i, block in enumerate(self.transformer.h):
+            # [BOLT ⚡ KV CACHE]: Pass the cache for the current layer.
+            layer_kv_cache = kv_cache[i] if kv_cache is not None else None
+            x, new_layer_kv_cache = block(x, kv_cache=layer_kv_cache)
+            new_kv_cache.append(new_layer_kv_cache)
 
         # Final layer norm and language model head
         x = self.transformer.ln_f(x)
@@ -354,17 +380,27 @@ class GPT(nn.Module):
             # if we are given some desired targets also calculate the loss
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
-        return logits, loss
+        return logits, loss, new_kv_cache
 
     @torch.no_grad()
     def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_p: float = 0.9) -> torch.Tensor:
         """
         Autoregressively generates a sequence of tokens using top-p (nucleus) sampling.
+        [BOLT ⚡ KV CACHE]: This method is optimized to use a KV cache for faster inference.
         """
         self.eval()
+
+        # [BOLT ⚡ KV CACHE]: Prefill the cache with the prompt.
+        # The first forward pass processes the entire prompt and populates the cache.
+        _, _, kv_cache = self(idx)
+
+        # The token to start generation from is the last token of the prompt.
+        next_token = idx[:, -1:]
+
         for _ in range(max_new_tokens):
-            idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
-            logits, _ = self(idx_cond)
+            # [BOLT ⚡ KV CACHE]: In the generation loop, we only pass the most recent token
+            # and the cache. This avoids recomputing the attention for the entire context.
+            logits, _, kv_cache = self(next_token, kv_cache=kv_cache)
             logits = logits[:, -1, :] / temperature
 
             # Top-p (nucleus) sampling
@@ -386,6 +422,9 @@ class GPT(nn.Module):
 
             idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, idx_next), dim=1)
+
+            # The next token for the loop is the one we just generated.
+            next_token = idx_next
 
         self.train()
         return idx
