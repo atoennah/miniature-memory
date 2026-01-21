@@ -51,13 +51,21 @@ def validate_file(filepath):
     except Exception as e:
         return False, f"Error reading file: {e}"
 
-def run_validation(raw_data_dir):
+def run_validation(raw_data_dir: str) -> None:
     """
     Walks through the raw data directory and validates each text file.
+
+    Args:
+        raw_data_dir: The path to the directory containing raw text files.
     """
     print(f"Starting validation in '{raw_data_dir}'...\n")
     validated_count = 0
     failed_count = 0
+
+    # Check if the directory exists
+    if not os.path.isdir(raw_data_dir):
+        print(f"Error: Directory not found at '{raw_data_dir}'")
+        return
 
     for root, _, files in os.walk(raw_data_dir):
         for filename in files:
@@ -79,15 +87,23 @@ def run_validation(raw_data_dir):
     print(f"  Passed: {validated_count}")
     print(f"  Failed: {failed_count}")
 
-if __name__ == "__main__":
+
+def main() -> None:
+    """
+    Main function for standalone execution.
+    This allows the script to be run directly from the command line for testing.
+    """
     parser = argparse.ArgumentParser(
         description="Validate raw text files in the dataset."
     )
     parser.add_argument(
-        "--raw_data_dir",
+        "--raw-data-dir",
         type=str,
         default="dataset/raw",
         help="The directory containing the raw text files.",
     )
     args = parser.parse_args()
     run_validation(args.raw_data_dir)
+
+if __name__ == "__main__":
+    main()

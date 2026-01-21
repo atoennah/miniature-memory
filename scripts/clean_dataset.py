@@ -53,13 +53,22 @@ def clean_content(content):
 
     return cleaned
 
-def run_cleaning(raw_dir, cleaned_dir):
+def run_cleaning(raw_dir: str, cleaned_dir: str) -> None:
     """
     Walks the raw data directory, cleans files, and saves them to the cleaned directory.
+
+    Args:
+        raw_dir: The path to the directory containing raw text files.
+        cleaned_dir: The path to the directory where cleaned files will be saved.
     """
     print(f"Starting cleaning process from '{raw_dir}' to '{cleaned_dir}'...\n")
     cleaned_count = 0
     skipped_count = 0
+
+    # Check if the source directory exists
+    if not os.path.isdir(raw_dir):
+        print(f"Error: Raw data directory not found at '{raw_dir}'")
+        return
 
     for root, _, files in os.walk(raw_dir):
         for filename in files:
@@ -94,21 +103,30 @@ def run_cleaning(raw_dir, cleaned_dir):
     print(f"  Cleaned: {cleaned_count}")
     print(f"  Skipped/Errors: {skipped_count}")
 
-if __name__ == "__main__":
+
+def main() -> None:
+    """
+    Main function for standalone execution.
+    This allows the script to be run directly from the command line for testing.
+    """
     parser = argparse.ArgumentParser(
         description="Clean raw text files and save them to a new directory."
     )
     parser.add_argument(
-        "--raw_dir",
+        "--raw-dir",
         type=str,
         default="dataset/raw",
         help="The directory containing the raw text files."
     )
     parser.add_argument(
-        "--cleaned_dir",
+        "--cleaned-dir",
         type=str,
         default="dataset/cleaned",
         help="The directory where cleaned text files will be saved."
     )
     args = parser.parse_args()
-    run_cleaning(args.raw_dir, args.cleaned_dir)
+    run_cleaning(raw_dir=args.raw_dir, cleaned_dir=args.cleaned_dir)
+
+
+if __name__ == "__main__":
+    main()

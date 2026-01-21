@@ -15,11 +15,20 @@ def find_text_files(directory):
     text_files.sort()
     return text_files
 
-def run_preparation(cleaned_dir, processed_dir):
+def run_preparation(cleaned_dir: str, processed_dir: str) -> None:
     """
     Concatenates all cleaned text files into a single training corpus.
+
+    Args:
+        cleaned_dir: The path to the directory containing cleaned text files.
+        processed_dir: The path to the directory where the final corpus will be saved.
     """
     print(f"Starting data preparation from '{cleaned_dir}'...\n")
+
+    # Check if the source directory exists
+    if not os.path.isdir(cleaned_dir):
+        print(f"Error: Cleaned data directory not found at '{cleaned_dir}'")
+        return
 
     # Ensure the processed directory exists
     os.makedirs(processed_dir, exist_ok=True)
@@ -51,21 +60,30 @@ def run_preparation(cleaned_dir, processed_dir):
     except Exception as e:
         print(f"\n[❌ ERROR] An error occurred during data preparation: {e}")
 
-if __name__ == "__main__":
+
+def main() -> None:
+    """
+    Main function for standalone execution.
+    This allows the script to be run directly from the command line for testing.
+    """
     parser = argparse.ArgumentParser(
         description="Prepare cleaned data for training by concatenating it into a single file."
     )
     parser.add_argument(
-        "--cleaned_dir",
+        "--cleaned-dir",
         type=str,
         default="dataset/cleaned",
         help="The directory containing the cleaned text files."
     )
     parser.add_argument(
-        "--processed_dir",
+        "--processed-dir",
         type=str,
         default="dataset/processed",
         help="The directory where the final training corpus will be saved."
     )
     args = parser.parse_args()
-    run_preparation(args.cleaned_dir, args.processed_dir)
+    run_preparation(cleaned_dir=args.cleaned_dir, processed_dir=args.processed_dir)
+
+
+if __name__ == "__main__":
+    main()
