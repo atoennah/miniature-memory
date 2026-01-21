@@ -1,29 +1,43 @@
-# NanoGPT-Lite Configuration (Conservative)
-
-model:
-  n_embd: 256
-  n_head: 4
-  n_layer: 7
-  block_size: 256
-  dropout: 0.2
-
-tokenizer:
-  type: character-level
-
-training:
-  batch_size: 32
-  learning_rate: 1e-5
-  betas: [0.9, 0.95]
-  epochs: 1
-  output_dir: 'training/checkpoints'
-  max_steps: 100
-  eval_interval: 10
-
+# A small config for testing, restructured for clarity and compatibility.
 data:
-    path: 'dataset/processed/train.txt'
-
+  path: 'dataset/processed/train.txt' # Default path, can be overridden.
+  dataset: shakespeare # Legacy, for reference.
+model:
+  n_layer: 6
+  n_head: 6
+  n_embd: 384
+  block_size: 256  # context of up to 256 previous characters
+  dropout: 0.2
+training:
+  output_dir: 'out-conservative'
+  eval_interval: 20
+  log_interval: 5
+  eval_iters: 50
+  always_save_checkpoint: False
+  # Optimizer params
+  learning_rate: 5.0e-5
+  weight_decay: 1.0e-1
+  beta1: 0.9
+  beta2: 0.99 # Make a bit bigger because number of tokens per iter is small
+  grad_clip: 1.0
+  # Learning rate decay settings
+  decay_lr: True
+  warmup_iters: 10
+  lr_decay_iters: 100
+  min_lr: 1.0e-5
+  # Training loop
+  batch_size: 32 # Power of 2 for efficiency
+  gradient_accumulation_steps: 1
+  max_steps: 100
+# W&B logging
+wandb:
+  log: False
+  project: 'shakespeare'
+  run_name: 'mini-gpt'
+# Tokenizer settings (char-level for this model)
+tokenizer:
+  type: 'char'
+# Inference settings for generation
 inference:
-  precision: FP16
   temperature: 0.8
   top_p: 0.9
-  repetition_penalty: 1.1
