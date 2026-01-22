@@ -3,6 +3,11 @@ import sys
 import subprocess
 from importlib.metadata import PackageNotFoundError, version
 
+# --- Local Script Imports ---
+from scripts.validate_raw import main as validate_raw
+from scripts.clean_dataset import main as clean_dataset
+from scripts.prepare_data import main as prepare_data
+
 
 def check_dependencies():
     """Checks if all the required packages are installed."""
@@ -61,6 +66,16 @@ def main():
     parser.add_argument(
         "--no-sync", action="store_true", help="Disable Hugging Face Hub synchronization."
     )
+    # --- Directory Arguments ---
+    parser.add_argument(
+        "--raw-dir", type=str, default="dataset/raw", help="Directory for raw data."
+    )
+    parser.add_argument(
+        "--cleaned-dir", type=str, default="dataset/cleaned", help="Directory for cleaned data."
+    )
+    parser.add_argument(
+        "--processed-dir", type=str, default="dataset/processed", help="Directory for processed data."
+    )
     args, unknown = parser.parse_known_args()
 
     # At Startup (The Morning Briefing): Pull the latest state from the Hub.
@@ -83,17 +98,17 @@ def main():
 
     if not args.skip_validation:
         print("--- Running Validation ---")
-        subprocess.run(["python3", "scripts/validate_raw.py"], check=True)
+        validate_raw(args.raw_dir)
         print("--- Validation completed successfully ---\n")
 
     if not args.skip_cleaning:
         print("--- Running Cleaning ---")
-        subprocess.run(["python3", "scripts/clean_dataset.py"], check=True)
+        clean_dataset(args.raw_dir, args.cleaned_dir)
         print("--- Cleaning completed successfully ---\n")
 
     if not args.skip_preparation:
         print("--- Running Preparation ---")
-        subprocess.run(["python3", "scripts/prepare_data.py"], check=True)
+        prepare_data(args.cleaned_dir, args.processed_dir)
         print("--- Preparation completed successfully ---\n")
 
     if not args.skip_training:
