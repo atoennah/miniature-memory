@@ -1,8 +1,12 @@
 import argparse
 import sys
-import subprocess
 from importlib.metadata import PackageNotFoundError, version
 
+# Modular Imports from the data pipeline
+from scripts.validate_raw import run_validation
+from scripts.clean_dataset import run_cleaning
+from scripts.prepare_data import run_preparation
+from scripts.sync_hub import push_state, pull_state
 
 def check_dependencies():
     """Checks if all the required packages are installed."""
@@ -40,81 +44,77 @@ def main():
     parser = argparse.ArgumentParser(
         description="A unified script to run the miniature-memory pipeline."
     )
-    parser.add_argument(
-        "--skip-validation", action="store_true", help="Skip the raw data validation step."
-    )
-    parser.add_argument(
-        "--skip-cleaning", action="store_true", help="Skip the dataset cleaning step."
-    )
-    parser.add_argument(
-        "--skip-preparation", action="store_true", help="Skip the data preparation step."
-    )
-    parser.add_argument(
-        "--skip-training", action="store_true", help="Skip the model training step."
-    )
-    parser.add_argument(
-        "--config",
-        type=str,
-        default="training/configs/small.yaml",
-        help="Path to the training configuration file."
-    )
-    parser.add_argument(
-        "--no-sync", action="store_true", help="Disable Hugging Face Hub synchronization."
-    )
+    # --- Directory Arguments ---
+    parser.add_argument("--raw-dir", type=str, default="dataset/raw", help="Directory for raw data.")
+    parser.add_argument("--cleaned-dir", type=str, default="dataset/cleaned", help="Directory for cleaned data.")
+    parser.add_argument("--processed-dir", type=str, default="dataset/processed", help="Directory for processed data.")
+
+    # --- Pipeline Control Arguments ---
+    parser.add_argument("--skip-validation", action="store_true", help="Skip the raw data validation step.")
+    parser.add_argument("--skip-cleaning", action="store_true", help="Skip the dataset cleaning step.")
+    parser.add_argument("--skip-preparation", action="store_true", help="Skip the data preparation step.")
+    parser.add_argument("--skip-training", action="store_true", help="Skip the model training step.")
+    parser.add_argument("--no-sync", action="store_true", help="Disable Hugging Face Hub synchronization.")
+
+    # --- Training-Specific Arguments ---
+    parser.add_argument("--config", type=str, default="training/configs/small.yaml", help="Path to the training configuration file.")
     args, unknown = parser.parse_known_args()
 
-    # At Startup (The Morning Briefing): Pull the latest state from the Hub.
+    # At Startup: Pull the latest state from the Hub.
     if not args.no_sync:
         print("--- Synchronizing with Hugging Face Hub (Pulling) ---")
         try:
-            subprocess.run(["python3", "scripts/sync_hub.py", "pull", "--target", "all"], check=True)
+            pull_state(target="all")
             print("--- Synchronization (Pull) complete ---\n")
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        except (IOError, ValueError) as e:
             print(f"Warning: Could not pull from Hugging Face Hub. Continuing with local state. Error: {e}\n", file=sys.stderr)
     else:
         print("--- Skipping Hugging Face Hub synchronization as per --no-sync flag ---\n")
 
     check_dependencies()
 
-    # Pass the unknown arguments to the training script
+    # Pass any unknown arguments to the training script
     sys.argv = [sys.argv[0]] + unknown
 
     print("Starting the miniature-memory pipeline...\n")
 
+    # --- Data Processing Pipeline ---
     if not args.skip_validation:
         print("--- Running Validation ---")
-        subprocess.run(["python3", "scripts/validate_raw.py"], check=True)
+        run_validation(raw_data_dir=args.raw_dir)
         print("--- Validation completed successfully ---\n")
 
     if not args.skip_cleaning:
         print("--- Running Cleaning ---")
-        subprocess.run(["python3", "scripts/clean_dataset.py"], check=True)
+        run_cleaning(raw_dir=args.raw_dir, cleaned_dir=args.cleaned_dir)
         print("--- Cleaning completed successfully ---\n")
 
     if not args.skip_preparation:
         print("--- Running Preparation ---")
-        subprocess.run(["python3", "scripts/prepare_data.py"], check=True)
+        run_preparation(cleaned_dir=args.cleaned_dir, processed_dir=args.processed_dir)
         print("--- Preparation completed successfully ---\n")
 
+    # --- Model Training ---
     if not args.skip_training:
         print("--- Running Training ---")
-        # Note: training/train.py is not yet a standalone script, so we keep the import for now.
         try:
+            # The training script is already designed to be importable
             from training.train import main as run_training
             run_training()
-        except ImportError:
-            _handle_import_error("training.train")
+        except ImportError as e:
+            print(f"Error: Could not import training module. Ensure it is correctly structured. Details: {e}", file=sys.stderr)
+            sys.exit(1)
         print("--- Training completed successfully ---\n")
 
     print("Pipeline finished.")
 
-    # After Training (The Clock Out): Push the new state to the Hub, if not disabled.
+    # After Training: Push the new state to the Hub.
     if not args.no_sync:
         print("\n--- Synchronizing with Hugging Face Hub (Pushing) ---")
         try:
-            subprocess.run(["python3", "scripts/sync_hub.py", "push", "--target", "all"], check=True)
+            push_state(target="all")
             print("--- Synchronization (Push) complete ---")
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        except (IOError, ValueError) as e:
             print(f"Warning: Could not push to Hugging Face Hub. Local changes are not saved to the cloud. Error: {e}", file=sys.stderr)
     else:
         print("\n--- Skipping Hugging Face Hub synchronization as per --no-sync flag ---")
