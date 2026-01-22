@@ -4,17 +4,13 @@ Welcome, contributor. This guide is your single source of truth for setting up y
 
 ## 1. Environment Setup
 
-This project is designed for a Linux-based environment and requires Python 3.12+.
-
-### Dependencies
-
-To install all required Python packages, run the following command from the root of the repository:
+This project is designed for a Linux-based environment and requires Python 3.12+. To install all required dependencies, simply run the setup script from the root of the repository:
 
 ```bash
-pip install -r requirements.txt
+./setup.sh
 ```
 
-This will install `torch`, `pyyaml`, `psutil`, and other essential libraries.
+This will install `torch`, `pyyaml`, and all other essential libraries from `requirements.txt`.
 
 ## 2. Core Project Structure
 
@@ -35,76 +31,61 @@ Understanding the repository layout is key to contributing effectively.
 ├── CONTRIBUTING.md     # The locked, non-negotiable project intent
 ├── DEVELOPER_GUIDE.md  # This file
 ├── README.md           # High-level project overview
-└── ROADMAP.md          # Long-term project goals
+├── run.py              # The main pipeline orchestrator script
+└── setup.sh            # The environment setup script
 ```
 
-## 3. The Data Pipeline
+## 3. The Automated Pipeline (`run.py`)
 
-The data pipeline is the heart of this project. It's a multi-stage process designed to be fully automated and reproducible.
+The primary workflow for this project is the automated pipeline orchestrated by `run.py`. This single script handles the entire data processing and training sequence, ensuring reproducibility and ease of use.
 
-**Golden Rule:** The `dataset/raw/` directory is sacred. Raw data is append-only and must never be manually edited. All transformations are handled by version-controlled scripts to ensure 100% reproducibility.
+**Golden Rule:** The `dataset/raw/` directory is sacred. Raw data is append-only and must never be manually edited. The `run.py` script and its underlying modules handle all transformations.
 
-### Stage 1: URL Discovery (Search)
+### Running the Full Pipeline
 
--   **Command:** `python3 scripts/cli.py search "<query>" --num-results <number>`
--   **Purpose:** Uses Google Search to find potential URLs for scraping.
--   **Output:** Appends new URLs to `dataset/metadata/urls.jsonl` with the status "new".
+To execute the entire pipeline—from data validation to model training—run the following command:
 
-### Stage 2: Content Fetching & Extraction
+```bash
+python3 run.py
+```
 
--   **Command:** `python3 scripts/cli.py process`
--   **Purpose:** Fetches the HTML for URLs marked "new", extracts the readable text content, and saves it.
--   **Output:**
-    -   Raw text files are saved in `dataset/raw/source_<source-id>/`.
-    -   The corresponding URL entry in `urls.jsonl` is updated to "fetched".
+This will sequentially:
+1.  Validate the raw data in `dataset/raw/`.
+2.  Clean the validated data and write it to `dataset/cleaned/`.
+3.  Prepare the cleaned data into `dataset/processed/train.txt`.
+4.  Start the training process using the default configuration.
 
-### Stage 3: Data Validation, Cleaning, and Preparation
+### Controlling the Pipeline
 
-This is a sequence of three scripted steps that process the raw data into a training-ready format.
+You can run specific parts of the pipeline using command-line flags.
 
-1.  **Validate Raw Data:**
-    -   **Script:** `scripts/validate_raw.py`
-    -   **Purpose:** Performs a quick sanity check on the raw text files. It ensures files have a minimum length and a high ratio of printable characters, filtering out empty or corrupted data.
+-   **Run data preparation only (skip training):**
+    ```bash
+    python3 run.py --skip-training
+    ```
 
-2.  **Clean Dataset:**
-    -   **Script:** `scripts/clean_dataset.py`
-    -   **Purpose:** Sanitizes the raw text by normalizing whitespace, removing non-narrative characters, and stripping extra newlines.
-    -   **Output:** Cleaned text files are written to the `dataset/cleaned/` directory.
+-   **Run training only (assuming data is already processed):**
+    ```bash
+    python3 run.py --skip-validation --skip-cleaning --skip-preparation
+    ```
 
-3.  **Prepare Data for Training:**
-    -   **Script:** `scripts/prepare_data.py`
-    -   **Purpose:** Concatenates all cleaned data into a single corpus, performs character-level tokenization, and creates the final `train.txt` and `val.txt` files.
-    -   **Output:** `dataset/processed/train.txt` and `dataset/processed/val.txt`.
+-   **Disable Hugging Face Hub Sync:**
+    The `run.py` script can synchronize with a remote repository on the Hugging Face Hub. To disable this feature for local experiments, use the `--no-sync` flag:
+    ```bash
+    python3 run.py --no-sync
+    ```
 
-## 4. Training the Model
+## 4. Generating Text
 
-Once the dataset is processed, you can train the model using the `training/train.py` script, which is configured via YAML files.
+To generate text from a trained model, use the `scripts/generate.py` script. You will need to provide the path to the training configuration and the specific model checkpoint you wish to use.
 
-### Configuration (`training/configs/small.yaml`)
+-   **Example Command:**
+    ```bash
+    python3 scripts/generate.py --config training/configs/small.yaml --checkpoint_path out/ckpt.pt --max_new_tokens 100
+    ```
+-   **Note:** Replace `out/ckpt.pt` with the actual path to your trained model checkpoint. Checkpoints are saved in the `out/` directory by default.
 
-All hyperparameters for the model and training loop are managed via YAML configuration files.
-
--   **`model`**: Defines the architecture (embedding size, number of heads, layers, etc.).
--   **`training`**: Defines the training parameters (batch size, learning rate, max steps).
-
-### Running Training
-
--   **Command:** `python3 training/train.py --config training/configs/small.yaml`
--   **Function:** Starts the training loop using the specified configuration.
--   **Checkpoints:** Model checkpoints are saved periodically to the `out/` directory (by default), allowing for resumable training.
-
-### Resuming Training
-
-If training is interrupted, simply run the same command again. The script will automatically detect and load the latest checkpoint from the `out_dir` specified in the config.
-
-## 5. Generating Text
-
-To generate text from a trained model, use the `scripts/generate.py` script.
-
--   **Command:** `python3 scripts/generate.py --max_new_tokens <number>`
--   **Function:** Loads the latest checkpoint and generates a sample of the specified length.
-
-## 6. Contribution Workflow
+## 5. Contribution Workflow
 
 1.  **Sync with `main`:** Always ensure your local branch is up-to-date with the latest `main` before starting work.
 2.  **Isolate Your Changes:** Develop new features in separate, well-defined modules to minimize merge conflicts.
