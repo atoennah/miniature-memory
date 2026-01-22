@@ -183,7 +183,11 @@ class Trainer:
         xb, yb = self.data_manager.get_batch()
 
         with torch.amp.autocast(device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')):
-            _, loss = self.model(xb, yb)
+            # [INJECTOR NOTE]: The forward pass of the model now returns a tuple of
+            # (logits, loss, kv_cache). During training, we only need the loss.
+            # We must still unpack the kv_cache to avoid a runtime error, even though
+            # it is not used in this context.
+            _, loss, _ = self.model(xb, yb)
 
         self.optimizer.zero_grad(set_to_none=True)
         scaler.scale(loss).backward()
