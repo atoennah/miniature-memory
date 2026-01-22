@@ -136,54 +136,50 @@ class CausalSelfAttention(nn.Module):
         self.n_embd = config.n_embd
         self.dropout = config.dropout
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass for the causal self-attention module."""
+    def forward(self, x: torch.Tensor, kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        Forward pass for the causal self-attention module.
+
+        Args:
+            x: Input tensor of shape (B, T, C).
+            kv_cache: An optional tuple containing the cached key and value tensors,
+                      each of shape (B, nh, T_prev, hs).
+
+        Returns:
+            A tuple containing:
+            - The output tensor of shape (B, T, C).
+            - The updated key-value cache.
+        """
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
         # Calculate query, key, values for all heads in batch
         q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
 
-        # [INJECTOR: DEMYSTIFYING MULTI-HEAD TENSOR MANIPULATION]
-        #
-        # The core idea of multi-head attention is to run the attention mechanism in
-        # parallel several times, with different, learned linear projections for Q, K,
-        # and V. This allows the model to jointly attend to information from different
-        # representational subspaces at different positions.
-        #
-        # The tensor transformations below are the key to making this efficient.
-        # Let's break down the journey of the Key tensor `k`:
-        #
-        # 1.  Initial shape of `k`: `(B, T, C)`
-        #     - B = Batch size (number of sequences processed at once)
-        #     - T = Sequence length (e.g., `block_size`)
-        #     - C = Embedding dimension (`n_embd`)
-        #
-        # 2.  `k.view(B, T, self.n_head, C // self.n_head)`
-        #     - This reshapes the tensor without changing its data. We are splitting the
-        #       embedding dimension `C` into `n_head` smaller chunks.
-        #     - `hs = C // self.n_head` is the "head size".
-        #     - New shape: `(B, T, nh, hs)` where `nh` is `n_head`.
-        #     - This logically groups the embeddings for each head, but they are still
-        #       interleaved in memory.
-        #
-        # 3.  `.transpose(1, 2)`
-        #     - This is the crucial step. We swap the sequence length dimension (T) with
-        #       the number of heads dimension (nh).
-        #     - New shape: `(B, nh, T, hs)`
-        #     - Why? The `scaled_dot_product_attention` function expects the heads to
-        #       be in the "batch" dimension. By rearranging the tensor this way, we
-        #       create a batch of `B * nh` attention problems, each of size `(T, hs)`.
-        #       PyTorch's optimized kernel can then process all these heads in parallel,
-        #       which is massively faster than looping through them.
-        #
-        # The same transformation is applied to `q` and `v`, preparing them for the
-        # batched attention calculation.
+        # [INJECTOR: KV CACHE MECHANICS]
+        # The tensor manipulations are adjusted to support a KV cache for efficient inference.
+        # During generation, instead of recomputing keys and values for the entire sequence,
+        # we only compute them for the newest token and concatenate them to the cached values.
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
+        # If a KV cache is provided, concatenate the new keys and values
+        if kv_cache is not None:
+            prev_k, prev_v = kv_cache
+            k = torch.cat([prev_k, k], dim=2)
+            v = torch.cat([prev_v, v], dim=2)
+
+        # The updated cache for this layer
+        updated_kv_cache = (k, v)
+
+        # When using a KV cache, we must disable the causal mask in the fused kernel
+        # because the query sequence length (T=1) is different from the key/value
+        # sequence length (T_prev + 1). The causal relationship is already handled
+        # by the autoregressive generation process.
+        is_causal = False if kv_cache is not None else True
+
         # Causal self-attention using PyTorch's fused kernel
-        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=is_causal)
 
         # Re-assemble all head outputs side by side
         # (B, nh, T, hs) -> (B, T, nh, hs) -> (B, T, C)
@@ -191,7 +187,7 @@ class CausalSelfAttention(nn.Module):
 
         # Output projection
         y = self.resid_dropout(self.c_proj(y))
-        return y
+        return y, updated_kv_cache
 
 class Block(nn.Module):
     # [INJECTOR: THE ARCHITECTURE OF A TRANSFORMER BLOCK]
@@ -229,11 +225,23 @@ class Block(nn.Module):
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = FeedForward(config)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass for a Transformer block."""
-        x = x + self.attn(self.ln_1(x))
+    def forward(self, x: torch.Tensor, kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        Forward pass for a Transformer block.
+
+        Args:
+            x: Input tensor of shape (B, T, C).
+            kv_cache: An optional tuple containing the cached key and value tensors for the attention layer.
+
+        Returns:
+            A tuple containing:
+            - The output tensor of shape (B, T, C).
+            - The updated key-value cache from the attention layer.
+        """
+        attn_output, updated_kv_cache = self.attn(self.ln_1(x), kv_cache=kv_cache)
+        x = x + attn_output
         x = x + self.mlp(self.ln_2(x))
-        return x
+        return x, updated_kv_cache
 
 class GPT(nn.Module):
     """A GPT-style transformer model."""
@@ -330,8 +338,21 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """Forward pass for the GPT model."""
+    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None, kv_cache: Optional[list] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[list]]:
+        """
+        Forward pass for the GPT model.
+
+        Args:
+            idx: Input tensor of token indices, shape (B, T).
+            targets: Optional target tensor for loss calculation, shape (B, T).
+            kv_cache: Optional list of KV cache tuples, one for each transformer block.
+
+        Returns:
+            A tuple containing:
+            - Logits tensor of shape (B, T, vocab_size).
+            - Loss tensor (or None if targets are not provided).
+            - Updated list of KV cache tuples.
+        """
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
         pos = self.pos[:, :t]
@@ -342,8 +363,11 @@ class GPT(nn.Module):
         x = self.transformer.drop(tok_emb + pos_emb)
 
         # Transformer blocks
-        for block in self.transformer.h:
-            x = block(x)
+        new_kv_cache = []
+        for i, block in enumerate(self.transformer.h):
+            layer_kv_cache = kv_cache[i] if kv_cache is not None else None
+            x, updated_layer_kv_cache = block(x, kv_cache=layer_kv_cache)
+            new_kv_cache.append(updated_layer_kv_cache)
 
         # Final layer norm and language model head
         x = self.transformer.ln_f(x)
@@ -351,41 +375,70 @@ class GPT(nn.Module):
 
         loss = None
         if targets is not None:
-            # if we are given some desired targets also calculate the loss
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
-        return logits, loss
+        return logits, loss, new_kv_cache
 
     @torch.no_grad()
     def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_p: float = 0.9) -> torch.Tensor:
         """
-        Autoregressively generates a sequence of tokens using top-p (nucleus) sampling.
+        Autoregressively generates a sequence of tokens using the KV cache and top-p sampling.
+
+        This implementation uses a two-phase approach for efficiency:
+        1.  Prefill Phase: A single forward pass is performed on the initial prompt to
+            compute and cache the Key and Value states for all transformer layers.
+        2.  Generation Phase: In each subsequent step, only the most recently generated
+            token is passed through the model. The cached K and V tensors are used,
+            avoiding redundant computation and making the process significantly faster.
         """
         self.eval()
-        for _ in range(max_new_tokens):
-            idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
-            logits, _ = self(idx_cond)
+        kv_cache = None
+
+        # Prefill phase: process the initial prompt
+        # The prompt is truncated to block_size if it's too long.
+        idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+        logits, _, kv_cache = self(idx_cond, kv_cache=None)
+
+        # Apply temperature and get the last logit for the next token prediction
+        logits = logits[:, -1, :] / temperature
+
+        # Top-p (nucleus) sampling for the first new token
+        probs = self._top_p_sampling(logits, top_p)
+        idx_next = torch.multinomial(probs, num_samples=1)
+        idx = torch.cat((idx, idx_next), dim=1)
+
+        # Generation phase: generate tokens one by one
+        for _ in range(max_new_tokens - 1):
+            # The input to the model is now only the most recent token
+            idx_cond = idx_next
+
+            # Forward pass with the cached K and V values
+            logits, _, kv_cache = self(idx_cond, kv_cache=kv_cache)
             logits = logits[:, -1, :] / temperature
 
             # Top-p (nucleus) sampling
-            probs = F.softmax(logits, dim=-1)
-            sorted_probs, sorted_indices = torch.sort(probs, descending=True)
-            cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
-
-            # Remove tokens with cumulative probability above the threshold
-            sorted_indices_to_remove = cumulative_probs > top_p
-            # Shift the indices to the right to keep the first token above the threshold
-            sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-            sorted_indices_to_remove[..., 0] = 0
-
-            indices_to_remove = sorted_indices[sorted_indices_to_remove]
-            probs[:, indices_to_remove] = 0
-
-            # Renormalize the probabilities
-            probs = probs / torch.sum(probs, dim=-1, keepdim=True)
-
+            probs = self._top_p_sampling(logits, top_p)
             idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, idx_next), dim=1)
 
         self.train()
         return idx
+
+    def _top_p_sampling(self, logits: torch.Tensor, top_p: float) -> torch.Tensor:
+        """Applies top-p (nucleus) sampling to the logits."""
+        probs = F.softmax(logits, dim=-1)
+        sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+        cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+
+        # Remove tokens with cumulative probability above the threshold
+        sorted_indices_to_remove = cumulative_probs > top_p
+        # Shift the indices to the right to keep the first token above the threshold
+        sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+        sorted_indices_to_remove[..., 0] = 0
+
+        indices_to_remove = sorted_indices[sorted_indices_to_remove]
+        probs[:, indices_to_remove] = 0
+
+        # Renormalize the probabilities
+        probs = probs / torch.sum(probs, dim=-1, keepdim=True)
+        return probs

@@ -120,9 +120,17 @@ class Trainer:
         assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
         assert len(param_dict.keys() - union_params) == 0, "Parameters not in decay/no_decay sets"
 
+        # [BOLT FIX]: Handle tied weights. The `param_dict` contains the canonical parameter
+        # names. We filter the `decay` and `no_decay` sets to ensure they only contain
+        # parameter names that exist in the `param_dict`. This is necessary because
+        # weight tying (`lm_head.weight = wte.weight`) can result in `named_parameters()`
+        # producing names that are aliases and not present in the final unique dict.
+        decay_pns = sorted(list(decay & set(param_dict.keys())))
+        no_decay_pns = sorted(list(no_decay & set(param_dict.keys())))
+
         optim_groups = [
-            {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": self.config['training']['weight_decay']},
-            {"params": [param_dict[pn] for pn in sorted(list(no_decay))], "weight_decay": 0.0},
+            {"params": [param_dict[pn] for pn in decay_pns], "weight_decay": self.config['training']['weight_decay']},
+            {"params": [param_dict[pn] for pn in no_decay_pns], "weight_decay": 0.0},
         ]
 
         learning_rate = self.config['training']['learning_rate']
@@ -183,7 +191,9 @@ class Trainer:
         xb, yb = self.data_manager.get_batch()
 
         with torch.amp.autocast(device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')):
-            _, loss = self.model(xb, yb)
+            # The forward pass now returns a third value, the kv_cache, which is not used during training.
+            # We discard it to prevent a ValueError.
+            _, loss, _ = self.model(xb, yb)
 
         self.optimizer.zero_grad(set_to_none=True)
         scaler.scale(loss).backward()
