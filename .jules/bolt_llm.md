@@ -35,3 +35,15 @@ This journal logs critical, hardware-aware learnings about LLM architecture perf
 - **Justification:** This eliminates thousands of redundant tensor creations and CPU-to-GPU overhead, resulting in a small but consistent increase in tokens/second. It is a pure win with no risk to numerical stability.
 
 **Conclusion:** Always verify environmental compatibility (`python --version`, `torch.__version__`) before attempting backend-dependent optimizations. Caching frequently used, non-leaf tensors is a reliable and safe performance pattern.
+
+---
+
+### Entry 3: The `DataLoader` Performance Trap on CPU-Bound Systems
+
+**Observation:** A standard optimization, replacing a synchronous `get_batch` method with an asynchronous `torch.utils.data.DataLoader` (using `num_workers=4`), resulted in a significant performance *regression*. Throughput dropped from ~2900 tokens/sec to ~2200 tokens/sec.
+
+**Diagnosis:** The environment is CPU-only. The cost of creating, scheduling, and communicating with 4 worker processes (`multiprocessing` overhead) was greater than the time saved by parallelizing the data loading. The data loading itself (reading from a memory-mapped file) was already extremely fast, meaning there was little to no I/O wait time to hide with parallelism.
+
+**Justification:** The `DataLoader` with `num_workers > 0` is designed to solve an I/O bottleneck, where the CPU is waiting for data to be read from a slow source (like a disk or network) and the GPU is waiting for the CPU. In a CPU-only environment, both the main training process and the data loading workers are competing for the same limited CPU resources. The overhead of process management becomes the new bottleneck, leading to a net loss in performance.
+
+**Conclusion:** Performance optimizations are context-dependent. A technique that is a guaranteed win on a GPU-powered machine can be a net loss on a CPU-only machine. In CPU-bound training scenarios, a simple, single-threaded, synchronous data loading pipeline can be significantly faster than a complex, multi-process one. Always measure the impact of an optimization in the target environment.
