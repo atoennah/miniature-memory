@@ -40,6 +40,40 @@ from torch.nn import functional as F
 from typing import Optional, Tuple
 
 class GPTConfig:
+    # [INJECTOR: THE HYPERPARAMETERS OF TRANSFORMER ARCHITECTURE]
+    #
+    # The GPTConfig class encapsulates the core architectural hyperparameters of the model.
+    # These values define the size, shape, and capacity of the network. Understanding their
+    # interplay is crucial for both model design and performance tuning.
+    #
+    #   - vocab_size: The total number of unique tokens in the tokenizer's vocabulary.
+    #     This determines the dimensions of the token embedding table and the final
+    #     output layer (the "un-embedding" or language model head).
+    #
+    #   - block_size: The maximum sequence length that the model can process in a single
+    #     forward pass. This is also known as the "context window". A larger block_size
+    #     allows the model to see more of the preceding text when making predictions,
+    #     but it also significantly increases the computational and memory cost, which
+    #     scales quadratically (O(T^2)) with sequence length in the attention mechanism.
+    #
+    #   - n_layer: The number of Transformer blocks to stack. This determines the "depth"
+    #     of the model. More layers allow the model to learn more complex and abstract
+    #     features from the data.
+    #
+    #   - n_head: The number of attention heads in the Multi-Head Self-Attention mechanism.
+    #     This allows the model to jointly attend to information from different
+    #     representational subspaces. The total embedding dimension (`n_embd`) is split
+    #     across these heads. For example, if `n_embd` is 768 and `n_head` is 12, then
+    #     each head will have a dimension of 64.
+    #
+    #   - n_embd: The dimensionality of the token embeddings and the internal hidden states
+    #     of the model. This is the primary parameter that defines the "width" of the model.
+    #     A larger `n_embd` provides more capacity for the model to represent information.
+    #
+    #   - dropout: The dropout rate used for regularization. During training, a random
+    #     fraction of neurons' outputs are set to zero at each update step. This prevents
+    #     the model from becoming too reliant on any single neuron and helps to prevent
+    #     overfitting.
     """Configuration for the GPT model."""
     def __init__(self, vocab_size: int, block_size: int, n_layer: int, n_head: int, n_embd: int, dropout: float):
         self.vocab_size = vocab_size
@@ -351,7 +385,24 @@ class GPT(nn.Module):
 
         loss = None
         if targets is not None:
-            # if we are given some desired targets also calculate the loss
+            # [INJECTOR: DEMYSTIFYING CROSS-ENTROPY LOSS]
+            #
+            # PyTorch's `cross_entropy` function expects its inputs in a specific shape:
+            #   - Input (Logits): A 2D tensor of shape `(N, C)` where `N` is the number of
+            #     items in the batch and `C` is the number of classes (our `vocab_size`).
+            #   - Target: A 1D tensor of shape `(N)` containing the correct class index
+            #     for each item in the batch.
+            #
+            # Our `logits` tensor has shape `(B, T, C)`, and `targets` has shape `(B, T)`,
+            # where B is Batch Size and T is Sequence Length. To make them compatible,
+            # we "flatten" the batch and sequence dimensions into a single dimension.
+            #
+            #   - `logits.view(-1, logits.size(-1))` reshapes `logits` to `(B * T, C)`.
+            #   - `targets.view(-1)` reshapes `targets` to `(B * T)`.
+            #
+            # This effectively treats our sequence of `T` predictions for each of the `B`
+            # items in the batch as one large batch of `B * T` independent predictions.
+            # The loss is then calculated over this entire batch and averaged.
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
         return logits, loss
@@ -362,10 +413,104 @@ class GPT(nn.Module):
         Autoregressively generates a sequence of tokens using top-p (nucleus) sampling.
         """
         self.eval()
+        # [INJECTOR NOTE: THE CRITICAL BOTTLENECK OF NAIVE AUTOREGRESSION]
+        #
+        # The current implementation of the `generate` loop is simple and correct, but it is
+        # computationally inefficient. At each step, we re-process the *entire* sequence
+        # `idx_cond` through the `forward()` pass. This is wasteful because the Key (K) and
+        # Value (V) projections for all previous tokens have already been computed in the
+        # self-attention layers and do not change from one step to the next.
+        #
+        # For a sequence of length T, the computation is O(T^2). As we generate more tokens,
+        # the context length grows, and the time to generate the next token increases
+        # quadratically.
+        #
+        # THE SOLUTION: KEY-VALUE (KV) CACHING
+        #
+        # To optimize this, we can implement a "KV Cache". The cache would be a tensor (or
+        # set of tensors) stored in each Transformer Block that holds the pre-computed K and
+        # V vectors for all tokens in the context.
+        #
+        # The optimized generation process would look like this:
+        #
+        # 1.  Prefill Phase:
+        #     -   On the very first step, process the entire input prompt `idx` through the
+        #         model.
+        #     -   As the K and V vectors are computed in each attention head of each block,
+        #         store them in the cache.
+        #
+        # 2.  Generation Phase (for each new token):
+        #     -   On subsequent steps, we only need to pass the *single most recent token*
+        #         through the model.
+        #     -   In the attention layers, we compute the K and V vectors for just this
+        #         new token.
+        #     -   We then *append* these new K and V vectors to their respective caches.
+        #     -   The attention mechanism is then computed using the Query (Q) from the new
+        #         token and the *entire cached history* of K and V vectors.
+        #
+        # This transforms the complexity of each generation step from O(T^2) to O(T),
+        # where T is the current sequence length. The initial prefill is still O(Prompt^2),
+        # but each subsequent step is much faster, leading to a dramatic speedup for
+        # generating long sequences.
+        #
+        # TODO [SCALING]: To implement KV Caching, we would need to:
+        #   a. Modify the `Block` and `CausalSelfAttention` classes to accept an optional
+        #      `kv_cache` argument.
+        #   b. The `forward` pass of these modules would need logic to use the cache if
+        #      present and to return the updated cache.
+        #   c. The `generate` loop would be rewritten to manage the cache, separating the
+        #      "prefill" and "generation" steps.
         for _ in range(max_new_tokens):
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
             logits, _ = self(idx_cond)
             logits = logits[:, -1, :] / temperature
+
+            # [INJECTOR: THE THEORY OF NUCLEUS SAMPLING (TOP-P)]
+            #
+            # When generating text, we need a strategy to select the next token from the
+            # probability distribution output by the model.
+            #
+            # 1.  Greedy Sampling (top_p=0, temperature=1): Always pick the single most
+            #     likely token. This is deterministic and often leads to repetitive, boring
+            #     text.
+            # 2.  Temperature Sampling: The `temperature` parameter rescales the logits
+            #     before the softmax.
+            #       - T > 1.0: Makes the distribution flatter, increasing randomness and
+            #         creativity, but also the risk of grammatical errors.
+            #       - T < 1.0: Makes the distribution sharper, favoring more likely tokens
+            #         and leading to more conservative, focused text.
+            # 3.  Top-K Sampling: Consider only the `k` most likely tokens and sample from
+            #     that truncated distribution. The problem is that the number of "good"
+            #     next tokens can vary. Sometimes the model is very confident (one token
+            #     has 99% probability), and sometimes it's uncertain (many tokens have
+            #     similar low probabilities). A fixed `k` is not adaptive.
+            #
+            # 4.  Nucleus Sampling (Top-P): This is an adaptive approach. Instead of
+            #     picking a fixed number `k`, we pick a cumulative probability threshold `p`.
+            #     We sort the tokens by their probability and sum them up until we reach `p`.
+            #     The set of tokens included in this sum is the "nucleus". We then sample
+            #     from this smaller, more probable set.
+            #
+            #     Example (top_p = 0.9):
+            #     - "the": 0.5
+            #     - "a":   0.3
+            #     - "an":  0.1  <-- Cumulative sum is 0.5 + 0.3 + 0.1 = 0.9. Nucleus ends here.
+            #     - "in":  0.05 <-- This and all subsequent tokens are excluded.
+            #
+            #     The final sample will be drawn from {"the", "a", "an"}. This method adapts
+            #     the size of the sampling pool based on the model's confidence, making it
+            #     a very effective and widely used decoding strategy.
+            #
+            # Implementation Steps:
+            # 1.  Apply temperature to logits.
+            # 2.  Compute probabilities using softmax.
+            # 3.  Sort probabilities in descending order.
+            # 4.  Compute the cumulative sum of sorted probabilities.
+            # 5.  Find the tokens whose cumulative probability exceeds `top_p`. These are
+            #     the tokens we want to *remove*.
+            # 6.  Set the probability of the removed tokens to 0.
+            # 7.  Renormalize the probabilities so they sum to 1 again.
+            # 8.  Sample from the renormalized distribution.
 
             # Top-p (nucleus) sampling
             probs = F.softmax(logits, dim=-1)
