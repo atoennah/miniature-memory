@@ -15,7 +15,7 @@ training:
   eval_iters: 200
   always_save_checkpoint: False
   # Optimizer params
-  learning_rate: 1.0e-3
+  learning_rate: 5.0e-5 # Optimized learning rate
   weight_decay: 1.0e-1
   beta1: 0.9
   beta2: 0.99 # Make a bit bigger because number of tokens per iter is small
@@ -23,12 +23,12 @@ training:
   # Learning rate decay settings
   decay_lr: True
   warmup_iters: 100
-  lr_decay_iters: 500
-  min_lr: 1.0e-4
+  lr_decay_iters: 5000
+  min_lr: 5.0e-6
   # Training loop
-  batch_size: 32 # Power of 2 for efficiency
+  batch_size: 64
   gradient_accumulation_steps: 1
-  max_steps: 500
+  max_steps: 5000
 # W&B logging
 wandb:
   log: False

@@ -1,6 +1,7 @@
 import argparse
 import sys
 import subprocess
+import yaml
 from importlib.metadata import PackageNotFoundError, version
 
 
@@ -98,12 +99,19 @@ def main():
 
     if not args.skip_training:
         print("--- Running Training ---")
-        # Note: training/train.py is not yet a standalone script, so we keep the import for now.
         try:
-            from training.train import main as run_training
-            run_training()
+            with open(args.config, 'r') as f:
+                config = yaml.safe_load(f)
+        except FileNotFoundError:
+            print(f"Error: Configuration file not found at '{args.config}'", file=sys.stderr)
+            sys.exit(1)
+
+        try:
+            from training.train import run_training
+            run_training(config)
         except ImportError:
-            _handle_import_error("training.train")
+            print("Error: Could not import the training module.", file=sys.stderr)
+            sys.exit(1)
         print("--- Training completed successfully ---\n")
 
     print("Pipeline finished.")
