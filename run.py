@@ -3,6 +3,14 @@ import sys
 import subprocess
 from importlib.metadata import PackageNotFoundError, version
 
+import yaml
+import os
+
+# Directly import the main functions from the pipeline scripts
+from scripts.validate_raw import run_validation
+from scripts.clean_dataset import run_cleaning
+from scripts.prepare_data import run_preparation
+from training.train import run_training
 
 def check_dependencies():
     """Checks if all the required packages are installed."""
@@ -61,6 +69,16 @@ def main():
     parser.add_argument(
         "--no-sync", action="store_true", help="Disable Hugging Face Hub synchronization."
     )
+    # Add arguments for data directories to maintain script compatibility
+    parser.add_argument(
+        "--raw-dir", type=str, default="dataset/raw", help="Directory for raw data."
+    )
+    parser.add_argument(
+        "--cleaned-dir", type=str, default="dataset/cleaned", help="Directory for cleaned data."
+    )
+    parser.add_argument(
+        "--processed-dir", type=str, default="dataset/processed", help="Directory for processed data."
+    )
     args, unknown = parser.parse_known_args()
 
     # At Startup (The Morning Briefing): Pull the latest state from the Hub.
@@ -76,34 +94,38 @@ def main():
 
     check_dependencies()
 
-    # Pass the unknown arguments to the training script
-    sys.argv = [sys.argv[0]] + unknown
 
     print("Starting the miniature-memory pipeline...\n")
 
     if not args.skip_validation:
         print("--- Running Validation ---")
-        subprocess.run(["python3", "scripts/validate_raw.py"], check=True)
+        run_validation(args.raw_dir)
         print("--- Validation completed successfully ---\n")
 
     if not args.skip_cleaning:
         print("--- Running Cleaning ---")
-        subprocess.run(["python3", "scripts/clean_dataset.py"], check=True)
+        run_cleaning(args.raw_dir, args.cleaned_dir)
         print("--- Cleaning completed successfully ---\n")
 
     if not args.skip_preparation:
         print("--- Running Preparation ---")
-        subprocess.run(["python3", "scripts/prepare_data.py"], check=True)
+        run_preparation(args.cleaned_dir, args.processed_dir)
         print("--- Preparation completed successfully ---\n")
 
     if not args.skip_training:
         print("--- Running Training ---")
-        # Note: training/train.py is not yet a standalone script, so we keep the import for now.
         try:
-            from training.train import main as run_training
-            run_training()
-        except ImportError:
-            _handle_import_error("training.train")
+            with open(args.config, 'r') as f:
+                config = yaml.safe_load(f)
+        except FileNotFoundError:
+            print(f"Error: Training configuration file not found at '{args.config}'", file=sys.stderr)
+            sys.exit(1)
+
+        # Override the data path in the config with the one from our arguments
+        config.setdefault('data', {})['path'] = os.path.join(args.processed_dir, 'train.txt')
+
+        # Pass the fully constructed config to the training function
+        run_training(config)
         print("--- Training completed successfully ---\n")
 
     print("Pipeline finished.")

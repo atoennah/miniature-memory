@@ -52,6 +52,13 @@ def main() -> None:
         default='training/configs/small.yaml',
         help='Path to the YAML configuration file from the repository root.'
     )
+    # Add an argument for the data path to allow overriding the config file
+    parser.add_argument(
+        '--data-path',
+        type=str,
+        default=None,
+        help='Path to the training data file (e.g., train.txt). Overrides the path in the config.'
+    )
     args = parser.parse_args()
 
     try:
@@ -61,9 +68,13 @@ def main() -> None:
         print(f"Error: Configuration file not found at '{args.config}'")
         return
 
-    # Provide sensible defaults for standalone execution.
+    # Provide sensible defaults and override with command-line arguments if provided.
     config.setdefault('training', {}).setdefault('output_dir', 'training/checkpoints')
     config.setdefault('data', {}).setdefault('path', 'dataset/processed/train.txt')
+
+    # If --data-path is provided, it overrides the value from the YAML file.
+    if args.data_path:
+        config['data']['path'] = args.data_path
 
     run_training(config)
 
