@@ -1,11 +1,28 @@
 import argparse
 import sys
-import subprocess
 from importlib.metadata import PackageNotFoundError, version
+from typing import List
+
+# --- Script Imports ---
+# Refactored to use direct function calls instead of subprocesses for efficiency
+# and better error handling.
+from scripts.validate_raw import run_validation
+from scripts.clean_dataset import run_cleaning
+from scripts.prepare_data import run_preparation
+from scripts.sync_hub import push_state, pull_state
+
+# --- Constants ---
+# Define dataset directories centrally to ensure consistency.
+RAW_DIR = "dataset/raw"
+CLEANED_DIR = "dataset/cleaned"
+PROCESSED_DIR = "dataset/processed"
 
 
-def check_dependencies():
-    """Checks if all the required packages are installed."""
+def check_dependencies() -> None:
+    """
+    Checks if all packages from requirements.txt are installed.
+    Exits gracefully if dependencies are missing.
+    """
     try:
         with open('requirements.txt', 'r') as f:
             requirements = [line.strip() for line in f if line.strip() and not line.startswith('-e')]
@@ -13,7 +30,7 @@ def check_dependencies():
         print("Warning: requirements.txt not found. Skipping dependency check.", file=sys.stderr)
         return
 
-    missing_packages = []
+    missing_packages: List[str] = []
     for package in requirements:
         package_name = package.split('==')[0].strip()
         if not package_name:
@@ -30,12 +47,16 @@ def check_dependencies():
         print("\nPlease install them by running: pip install -r requirements.txt", file=sys.stderr)
         sys.exit(1)
 
-def main():
+
+def main() -> None:
     """
     Main function to run the miniature-memory data and training pipeline.
 
     This script orchestrates the validation, cleaning, preparation, and training
     stages. Each stage can be skipped via command-line arguments.
+
+    The pipeline is now implemented using direct function calls for better
+    performance and maintainability.
     """
     parser = argparse.ArgumentParser(
         description="A unified script to run the miniature-memory pipeline."
@@ -63,58 +84,59 @@ def main():
     )
     args, unknown = parser.parse_known_args()
 
-    # At Startup (The Morning Briefing): Pull the latest state from the Hub.
+    # Pass any unknown arguments directly to the training script
+    sys.argv = [sys.argv[0]] + unknown
+
+    # At Startup: Pull the latest state from the Hub.
     if not args.no_sync:
         print("--- Synchronizing with Hugging Face Hub (Pulling) ---")
         try:
-            subprocess.run(["python3", "scripts/sync_hub.py", "pull", "--target", "all"], check=True)
+            pull_state("all")
             print("--- Synchronization (Pull) complete ---\n")
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        except (IOError, ValueError) as e:
             print(f"Warning: Could not pull from Hugging Face Hub. Continuing with local state. Error: {e}\n", file=sys.stderr)
     else:
         print("--- Skipping Hugging Face Hub synchronization as per --no-sync flag ---\n")
 
     check_dependencies()
 
-    # Pass the unknown arguments to the training script
-    sys.argv = [sys.argv[0]] + unknown
-
     print("Starting the miniature-memory pipeline...\n")
 
     if not args.skip_validation:
         print("--- Running Validation ---")
-        subprocess.run(["python3", "scripts/validate_raw.py"], check=True)
+        run_validation(RAW_DIR)
         print("--- Validation completed successfully ---\n")
 
     if not args.skip_cleaning:
         print("--- Running Cleaning ---")
-        subprocess.run(["python3", "scripts/clean_dataset.py"], check=True)
+        run_cleaning(RAW_DIR, CLEANED_DIR)
         print("--- Cleaning completed successfully ---\n")
 
     if not args.skip_preparation:
         print("--- Running Preparation ---")
-        subprocess.run(["python3", "scripts/prepare_data.py"], check=True)
+        run_preparation(CLEANED_DIR, PROCESSED_DIR)
         print("--- Preparation completed successfully ---\n")
 
     if not args.skip_training:
         print("--- Running Training ---")
-        # Note: training/train.py is not yet a standalone script, so we keep the import for now.
         try:
             from training.train import main as run_training
             run_training()
         except ImportError:
-            _handle_import_error("training.train")
+            print(f"Error: Could not import 'training.train'.", file=sys.stderr)
+            print("Please ensure the module exists and its dependencies are installed.", file=sys.stderr)
+            sys.exit(1)
         print("--- Training completed successfully ---\n")
 
     print("Pipeline finished.")
 
-    # After Training (The Clock Out): Push the new state to the Hub, if not disabled.
+    # After Training: Push the new state to the Hub.
     if not args.no_sync:
         print("\n--- Synchronizing with Hugging Face Hub (Pushing) ---")
         try:
-            subprocess.run(["python3", "scripts/sync_hub.py", "push", "--target", "all"], check=True)
+            push_state("all")
             print("--- Synchronization (Push) complete ---")
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        except (IOError, ValueError) as e:
             print(f"Warning: Could not push to Hugging Face Hub. Local changes are not saved to the cloud. Error: {e}", file=sys.stderr)
     else:
         print("\n--- Skipping Hugging Face Hub synchronization as per --no-sync flag ---")
