@@ -120,9 +120,13 @@ class Trainer:
         assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
         assert len(param_dict.keys() - union_params) == 0, "Parameters not in decay/no_decay sets"
 
+        # Filter param names to ensure they exist in param_dict, handling tied weights.
+        decay_params = [param_dict[pn] for pn in sorted(list(decay)) if pn in param_dict]
+        no_decay_params = [param_dict[pn] for pn in sorted(list(no_decay)) if pn in param_dict]
+
         optim_groups = [
-            {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": self.config['training']['weight_decay']},
-            {"params": [param_dict[pn] for pn in sorted(list(no_decay))], "weight_decay": 0.0},
+            {"params": decay_params, "weight_decay": self.config['training']['weight_decay']},
+            {"params": no_decay_params, "weight_decay": 0.0},
         ]
 
         learning_rate = self.config['training']['learning_rate']
@@ -170,30 +174,24 @@ class Trainer:
             param_group['lr'] = lr
         return lr
 
-    def _run_step(self, scaler: torch.cuda.amp.GradScaler) -> torch.Tensor:
+    def _run_step(self) -> torch.Tensor:
         """
-        Executes a single forward and backward pass for one batch of data,
-        including gradient scaling and clipping.
-        Args:
-            scaler: The gradient scaler for mixed-precision training.
+        Executes a single forward and backward pass for one batch of data.
         Returns:
             The loss tensor for the current step.
         """
         grad_clip = self.config['training'].get('grad_clip', 1.0)
         xb, yb = self.data_manager.get_batch()
 
-        with torch.amp.autocast(device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')):
-            _, loss = self.model(xb, yb)
+        _, loss = self.model(xb, yb)
 
         self.optimizer.zero_grad(set_to_none=True)
-        scaler.scale(loss).backward()
+        loss.backward()
 
         if grad_clip > 0:
-            scaler.unscale_(self.optimizer)
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip)
 
-        scaler.step(self.optimizer)
-        scaler.update()
+        self.optimizer.step()
 
         return loss
 
@@ -223,11 +221,9 @@ class Trainer:
         eval_interval = self.config['training']['eval_interval']
         decay_lr = self.config['training'].get('decay_lr', False)
 
-        scaler = torch.cuda.amp.GradScaler(enabled=(self.device == 'cuda'))
-
         for step in range(max_steps):
             lr = self._update_lr(step) if decay_lr else None
-            loss = self._run_step(scaler)
+            loss = self._run_step()
 
             if step % eval_interval == 0 or step == max_steps - 1:
                 self._log_progress(step, loss, lr)
