@@ -40,7 +40,53 @@ from torch.nn import functional as F
 from typing import Optional, Tuple
 
 class GPTConfig:
-    """Configuration for the GPT model."""
+    """
+    Configuration for the GPT model. This class holds the architectural hyperparameters.
+
+    [INJECTOR: THE ARCHITECT'S BLUEPRINT]
+
+    These parameters are not just numbers; they are the fundamental levers that define
+    the model's size, capacity, and computational cost. Understanding their interplay
+    is the first step to mastering the art of language model architecture.
+
+    -   `vocab_size`: The size of the vocabulary. This determines the dimensions of the
+        token embedding matrix (`wte`) and the final output projection (`lm_head`). A
+        larger vocabulary allows the model to understand more unique tokens but
+        increases the model's parameter count.
+
+    -   `block_size`: The maximum sequence length that the model can process at once.
+        This is also known as the "context window". A larger `block_size` allows the
+        model to see more context when making predictions, which is crucial for
+        understanding long-range dependencies in text. However, the memory and
+        computational cost of the self-attention mechanism scale quadratically
+        (O(T^2)) with the sequence length, making this a very expensive parameter
+        to increase.
+
+    -   `n_layer`: The number of Transformer blocks to stack. This determines the
+        "depth" of the model. A deeper model has more capacity to learn complex
+        hierarchical representations of the input text. More layers generally lead
+        to better performance, but also increase the risk of vanishing gradients
+        (mitigated by residual connections) and significantly increase computational
+        cost.
+
+    -   `n_head`: The number of attention heads in the multi-head self-attention
+        mechanism. Dividing the embedding dimension (`n_embd`) into multiple heads
+        allows the model to attend to information from different representational
+        subspaces simultaneously. For example, one head might focus on syntactic
+        relationships while another focuses on semantic similarity.
+
+    -   `n_embd`: The dimensionality of the token and positional embeddings. This
+        parameter controls the "width" of the model. A larger embedding dimension
+        provides more representational capacity for each token but also increases
+        the model's size and computational cost. The `n_embd` must be divisible
+        by `n_head`.
+
+    -   `dropout`: The dropout rate, a regularization technique used to prevent
+        overfitting. During training, a random fraction of neurons (and their
+        connections) are temporarily "dropped" or ignored. This forces the network
+        to learn more robust and redundant representations, as it cannot rely on
+        any single feature.
+    """
     def __init__(self, vocab_size: int, block_size: int, n_layer: int, n_head: int, n_embd: int, dropout: float):
         self.vocab_size = vocab_size
         self.block_size = block_size
@@ -360,6 +406,47 @@ class GPT(nn.Module):
     def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_p: float = 0.9) -> torch.Tensor:
         """
         Autoregressively generates a sequence of tokens using top-p (nucleus) sampling.
+
+        [INJECTOR: THE ART & SCIENCE OF CONTROLLED GENERATION]
+
+        Generating text is not a deterministic process; it's about sampling from a
+        probability distribution. The challenge is to sample in a way that produces
+        text that is both coherent and creative.
+
+        The hierarchy of sampling strategies:
+        1.  Greedy Search (The "Most Likely" Path): At each step, simply pick the token
+            with the highest probability (the highest logit value).
+            -   Pros: Simple, fast, and often produces reasonable-sounding text for
+                short sequences.
+            -   Cons: Extremely prone to repetition and getting stuck in loops. It lacks
+                creativity and often produces dull, predictable text.
+
+        2.  Temperature Sampling (Adding "Creativity"): We can introduce randomness by
+            scaling the logits before applying the softmax.
+            -   `logits / temperature`:
+            -   `temperature` > 1.0: Makes the distribution flatter (more uniform),
+                increasing the probability of sampling less likely tokens. This makes
+                the output more random and "creative".
+            -   `temperature` < 1.0: Makes the distribution sharper, increasing the
+                probability of sampling the most likely tokens. This makes the output
+                more deterministic and "focused".
+            -   Cons: A single knob (`temperature`) controls the trade-off between
+                creativity and coherence. It can be hard to find a value that prevents
+                both repetition and nonsensical output.
+
+        3.  Top-p (Nucleus) Sampling (The "Best of Both Worlds"): Instead of sampling
+            from the entire vocabulary, we sample from a smaller, dynamically-sized
+            "nucleus" of the most probable tokens.
+            -   The `top_p` parameter (e.g., 0.9) defines the cumulative probability
+                threshold. We sort the tokens by probability and sum them up until we
+                reach `top_p`. This forms our nucleus.
+            -   Pros: This is an adaptive strategy. For "high-confidence" predictions
+                (where one token has a very high probability), the nucleus will be small,
+                leading to more deterministic output. For "low-confidence" predictions
+                (where the probability is spread out over many tokens), the nucleus will
+                be larger, allowing for more creativity. This elegantly balances the
+                risk of repetition and gibberish. It has become the standard for
+                high-quality text generation.
         """
         self.eval()
         for _ in range(max_new_tokens):
