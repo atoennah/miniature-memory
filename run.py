@@ -3,6 +3,11 @@ import sys
 import subprocess
 from importlib.metadata import PackageNotFoundError, version
 
+# Refactor: Import pipeline functions directly to avoid subprocess overhead
+from scripts.validate_raw import run_validation
+from scripts.clean_dataset import run_cleaning
+from scripts.prepare_data import run_preparation
+
 
 def check_dependencies():
     """Checks if all the required packages are installed."""
@@ -83,17 +88,17 @@ def main():
 
     if not args.skip_validation:
         print("--- Running Validation ---")
-        subprocess.run(["python3", "scripts/validate_raw.py"], check=True)
+        run_validation(raw_data_dir="dataset/raw")
         print("--- Validation completed successfully ---\n")
 
     if not args.skip_cleaning:
         print("--- Running Cleaning ---")
-        subprocess.run(["python3", "scripts/clean_dataset.py"], check=True)
+        run_cleaning(raw_dir="dataset/raw", cleaned_dir="dataset/cleaned")
         print("--- Cleaning completed successfully ---\n")
 
     if not args.skip_preparation:
         print("--- Running Preparation ---")
-        subprocess.run(["python3", "scripts/prepare_data.py"], check=True)
+        run_preparation(cleaned_dir="dataset/cleaned", processed_dir="dataset/processed")
         print("--- Preparation completed successfully ---\n")
 
     if not args.skip_training:
