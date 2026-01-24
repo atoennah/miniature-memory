@@ -38,7 +38,28 @@ Understanding the repository layout is key to contributing effectively.
 └── ROADMAP.md          # Long-term project goals
 ```
 
-## 3. The Data Pipeline
+## 3. The `run.py` Orchestrator
+
+The `run.py` script is the main entry point for executing the entire data pipeline, from validation to training. It is designed to be a simple, powerful orchestrator that provides clear control over which stages of the pipeline are executed.
+
+### Usage
+
+The script is run from the command line with flags to include or skip specific stages:
+
+```bash
+# Run the full pipeline (default behavior)
+python3 run.py
+
+# Skip the training stage to only process data
+python3 run.py --skip-training
+
+# Run only the training stage, assuming data is already processed
+python3 run.py --skip-validation --skip-cleaning --skip-preparation
+```
+
+This script is the canonical way to run the project's workflow and is essential for maintaining reproducibility.
+
+## 4. The Data Pipeline
 
 The data pipeline is the heart of this project. It's a multi-stage process designed to be fully automated and reproducible.
 
