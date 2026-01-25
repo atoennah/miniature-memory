@@ -81,19 +81,28 @@ def main():
 
     print("Starting the miniature-memory pipeline...\n")
 
+    # Import the main functions from the scripts
+    try:
+        from scripts.validate_raw import main as validate_main
+        from scripts.clean_dataset import main as clean_main
+        from scripts.prepare_data import main as prepare_main
+    except ImportError as e:
+        print(f"Error: Could not import pipeline scripts. Make sure they are in the 'scripts' directory and are valid Python modules. Details: {e}", file=sys.stderr)
+        sys.exit(1)
+
     if not args.skip_validation:
         print("--- Running Validation ---")
-        subprocess.run(["python3", "scripts/validate_raw.py"], check=True)
+        validate_main()
         print("--- Validation completed successfully ---\n")
 
     if not args.skip_cleaning:
         print("--- Running Cleaning ---")
-        subprocess.run(["python3", "scripts/clean_dataset.py"], check=True)
+        clean_main()
         print("--- Cleaning completed successfully ---\n")
 
     if not args.skip_preparation:
         print("--- Running Preparation ---")
-        subprocess.run(["python3", "scripts/prepare_data.py"], check=True)
+        prepare_main()
         print("--- Preparation completed successfully ---\n")
 
     if not args.skip_training:
