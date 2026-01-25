@@ -1,8 +1,16 @@
 import argparse
 import sys
-import subprocess
 from importlib.metadata import PackageNotFoundError, version
 
+# --- Bolt Refactor: Direct Imports ---
+# Instead of inefficiently calling scripts as separate processes, we now import
+# their main functions directly. This creates a single, unified, and faster
+# execution pipeline.
+from scripts.sync_hub import pull_state, push_state
+from scripts.validate_raw import run_validation
+from scripts.clean_dataset import run_cleaning
+from scripts.prepare_data import run_preparation
+# --- End Bolt Refactor ---
 
 def check_dependencies():
     """Checks if all the required packages are installed."""
@@ -61,49 +69,64 @@ def main():
     parser.add_argument(
         "--no-sync", action="store_true", help="Disable Hugging Face Hub synchronization."
     )
+    # --- Bolt Refactor: Define data directories centrally ---
+    parser.add_argument(
+        "--raw-data-dir", type=str, default="dataset/raw", help="Directory for raw data."
+    )
+    parser.add_argument(
+        "--cleaned-data-dir", type=str, default="dataset/cleaned", help="Directory for cleaned data."
+    )
+    parser.add_argument(
+        "--processed-data-dir", type=str, default="dataset/processed", help="Directory for processed data."
+    )
+    # --- End Bolt Refactor ---
     args, unknown = parser.parse_known_args()
 
     # At Startup (The Morning Briefing): Pull the latest state from the Hub.
     if not args.no_sync:
         print("--- Synchronizing with Hugging Face Hub (Pulling) ---")
         try:
-            subprocess.run(["python3", "scripts/sync_hub.py", "pull", "--target", "all"], check=True)
+            # --- Bolt Refactor: Direct function call ---
+            pull_state(target="all")
             print("--- Synchronization (Pull) complete ---\n")
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        except Exception as e:
             print(f"Warning: Could not pull from Hugging Face Hub. Continuing with local state. Error: {e}\n", file=sys.stderr)
     else:
         print("--- Skipping Hugging Face Hub synchronization as per --no-sync flag ---\n")
 
     check_dependencies()
 
-    # Pass the unknown arguments to the training script
-    sys.argv = [sys.argv[0]] + unknown
-
+    # --- Bolt Refactor: Redundant sys.argv manipulation removed ---
     print("Starting the miniature-memory pipeline...\n")
 
     if not args.skip_validation:
         print("--- Running Validation ---")
-        subprocess.run(["python3", "scripts/validate_raw.py"], check=True)
+        # --- Bolt Refactor: Direct function call ---
+        run_validation(args.raw_data_dir)
         print("--- Validation completed successfully ---\n")
 
     if not args.skip_cleaning:
         print("--- Running Cleaning ---")
-        subprocess.run(["python3", "scripts/clean_dataset.py"], check=True)
+        # --- Bolt Refactor: Direct function call ---
+        run_cleaning(args.raw_data_dir, args.cleaned_data_dir)
         print("--- Cleaning completed successfully ---\n")
 
     if not args.skip_preparation:
         print("--- Running Preparation ---")
-        subprocess.run(["python3", "scripts/prepare_data.py"], check=True)
+        # --- Bolt Refactor: Direct function call ---
+        run_preparation(args.cleaned_data_dir, args.processed_data_dir)
         print("--- Preparation completed successfully ---\n")
 
     if not args.skip_training:
         print("--- Running Training ---")
-        # Note: training/train.py is not yet a standalone script, so we keep the import for now.
         try:
             from training.train import main as run_training
+            # Pass unknown args to the training script
+            sys.argv = [sys.argv[0]] + unknown
             run_training()
         except ImportError:
-            _handle_import_error("training.train")
+            print("Error: Could not import the training module.", file=sys.stderr)
+            sys.exit(1)
         print("--- Training completed successfully ---\n")
 
     print("Pipeline finished.")
@@ -112,9 +135,10 @@ def main():
     if not args.no_sync:
         print("\n--- Synchronizing with Hugging Face Hub (Pushing) ---")
         try:
-            subprocess.run(["python3", "scripts/sync_hub.py", "push", "--target", "all"], check=True)
+            # --- Bolt Refactor: Direct function call ---
+            push_state(target="all")
             print("--- Synchronization (Push) complete ---")
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        except Exception as e:
             print(f"Warning: Could not push to Hugging Face Hub. Local changes are not saved to the cloud. Error: {e}", file=sys.stderr)
     else:
         print("\n--- Skipping Hugging Face Hub synchronization as per --no-sync flag ---")
