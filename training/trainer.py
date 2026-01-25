@@ -115,6 +115,13 @@ class Trainer:
 
         # Sanity checks to ensure every parameter is in one of the sets
         param_dict = {pn: p for pn, p in self.model.named_parameters()}
+
+        # Filter the decay sets to include only parameters that are actually in the model's state dict.
+        # This handles cases where weights are tied (e.g., lm_head.weight is a reference to wte.weight)
+        # and one of the references is not included in named_parameters().
+        decay = decay & set(param_dict.keys())
+        no_decay = no_decay & set(param_dict.keys())
+
         inter_params = decay & no_decay
         union_params = decay | no_decay
         assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
