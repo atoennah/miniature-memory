@@ -13,7 +13,7 @@ A minimal, memory-aware, and fully automated pipeline for training small, specia
 This repository is managed with a strong focus on clear, centralized documentation. To understand the project, please use the following resources as your guide.
 
 -   **To understand *how* to contribute and use the pipeline:**
-    -   **[DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md):** The essential guide for all contributors. Contains setup instructions, a full data pipeline walkthrough, and training commands. **Start here.**
+    -   **[DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md):** The canonical source of truth for the project's technical workflow. It provides setup instructions and a complete walkthrough of the `run.py` orchestrator. **All developers must start here.**
 
 -   **To understand the project's governance and *why* decisions are made:**
     -   **[.jules/AGENTS.md](.jules/AGENTS.md):** Defines the roles and governance model for all agents and contributors.
@@ -32,4 +32,4 @@ This repository is managed with a strong focus on clear, centralized documentati
     python3 run.py
     ```
 
-For more detailed commands, including how to run specific steps of the pipeline, please see the [Developer Guide](DEVELOPER_GUIDE.md).
+For a detailed explanation of the pipeline stages and advanced `run.py` commands (e.g., skipping steps), please consult the canonical [Developer Guide](DEVELOPER_GUIDE.md).
