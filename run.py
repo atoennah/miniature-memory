@@ -61,6 +61,15 @@ def main():
     parser.add_argument(
         "--no-sync", action="store_true", help="Disable Hugging Face Hub synchronization."
     )
+    parser.add_argument(
+        "--raw-data-dir", type=str, default="dataset/raw", help="Directory for raw data."
+    )
+    parser.add_argument(
+        "--cleaned-dir", type=str, default="dataset/cleaned", help="Directory for cleaned data."
+    )
+    parser.add_argument(
+        "--processed-dir", type=str, default="dataset/processed", help="Directory for processed data."
+    )
     args, unknown = parser.parse_known_args()
 
     # At Startup (The Morning Briefing): Pull the latest state from the Hub.
@@ -79,21 +88,26 @@ def main():
     # Pass the unknown arguments to the training script
     sys.argv = [sys.argv[0]] + unknown
 
+    # Import data pipeline scripts
+    from scripts.validate_raw import run_validation
+    from scripts.clean_dataset import run_cleaning
+    from scripts.prepare_data import run_preparation
+
     print("Starting the miniature-memory pipeline...\n")
 
     if not args.skip_validation:
         print("--- Running Validation ---")
-        subprocess.run(["python3", "scripts/validate_raw.py"], check=True)
+        run_validation(raw_data_dir=args.raw_data_dir)
         print("--- Validation completed successfully ---\n")
 
     if not args.skip_cleaning:
         print("--- Running Cleaning ---")
-        subprocess.run(["python3", "scripts/clean_dataset.py"], check=True)
+        run_cleaning(raw_dir=args.raw_data_dir, cleaned_dir=args.cleaned_dir)
         print("--- Cleaning completed successfully ---\n")
 
     if not args.skip_preparation:
         print("--- Running Preparation ---")
-        subprocess.run(["python3", "scripts/prepare_data.py"], check=True)
+        run_preparation(cleaned_dir=args.cleaned_dir, processed_dir=args.processed_dir)
         print("--- Preparation completed successfully ---\n")
 
     if not args.skip_training:
