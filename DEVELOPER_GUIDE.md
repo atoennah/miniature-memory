@@ -4,17 +4,11 @@ Welcome, contributor. This guide is your single source of truth for setting up y
 
 ## 1. Environment Setup
 
-This project is designed for a Linux-based environment and requires Python 3.12+.
-
-### Dependencies
-
-To install all required Python packages, run the following command from the root of the repository:
+This project is designed for a Linux-based environment and requires Python 3.12+. To install all required Python packages, run the following command from the root of the repository:
 
 ```bash
-pip install -r requirements.txt
+./setup.sh
 ```
-
-This will install `torch`, `pyyaml`, `psutil`, and other essential libraries.
 
 ## 2. Core Project Structure
 
@@ -38,70 +32,68 @@ Understanding the repository layout is key to contributing effectively.
 └── ROADMAP.md          # Long-term project goals
 ```
 
-## 3. The Data Pipeline
+## 3. The Data Pipeline: A Technical Deep Dive
 
-The data pipeline is the heart of this project. It's a multi-stage process designed to be fully automated and reproducible.
+The data pipeline is a multi-stage process designed to be fully automated and reproducible.
 
 **Golden Rule:** The `dataset/raw/` directory is sacred. Raw data is append-only and must never be manually edited. All transformations are handled by version-controlled scripts to ensure 100% reproducibility.
 
-### Stage 1: URL Discovery (Search)
+### Stage 1: URL Discovery
 
--   **Command:** `python3 scripts/cli.py search "<query>" --num-results <number>`
+-   **Command:** `python3 -m scripts.discover --query "<query>" --num-results <number>`
 -   **Purpose:** Uses Google Search to find potential URLs for scraping.
 -   **Output:** Appends new URLs to `dataset/metadata/urls.jsonl` with the status "new".
 
-### Stage 2: Content Fetching & Extraction
+### Stage 2: Content Scraping
 
--   **Command:** `python3 scripts/cli.py process`
+-   **Command:** `python3 -m scripts.scrape`
 -   **Purpose:** Fetches the HTML for URLs marked "new", extracts the readable text content, and saves it.
 -   **Output:**
-    -   Raw text files are saved in `dataset/raw/source_<source-id>/`.
+    -   Raw text files are saved in `dataset/raw/`.
     -   The corresponding URL entry in `urls.jsonl` is updated to "fetched".
 
-### Stage 3: Data Validation, Cleaning, and Preparation
+### Stage 3: Data Cleaning
 
-This is a sequence of three scripted steps that process the raw data into a training-ready format.
+-   **Command:** `python3 -m scripts.clean`
+-   **Purpose:** Sanitizes the raw text by normalizing whitespace, removing non-narrative characters, and stripping extra newlines.
+-   **Output:** Cleaned text files are written to the `dataset/cleaned/` directory.
 
-1.  **Validate Raw Data:**
-    -   **Script:** `scripts/validate_raw.py`
-    -   **Purpose:** Performs a quick sanity check on the raw text files. It ensures files have a minimum length and a high ratio of printable characters, filtering out empty or corrupted data.
+### Stage 4: Data Preparation
 
-2.  **Clean Dataset:**
-    -   **Script:** `scripts/clean_dataset.py`
-    -   **Purpose:** Sanitizes the raw text by normalizing whitespace, removing non-narrative characters, and stripping extra newlines.
-    -   **Output:** Cleaned text files are written to the `dataset/cleaned/` directory.
+-   **Command:** `python3 -m scripts.prepare`
+-   **Purpose:** Concatenates all cleaned data into a single corpus, performs character-level tokenization, and creates the final `train.txt` and `val.txt` files.
+-   **Output:** `dataset/processed/train.txt` and `dataset/processed/val.txt`.
 
-3.  **Prepare Data for Training:**
-    -   **Script:** `scripts/prepare_data.py`
-    -   **Purpose:** Concatenates all cleaned data into a single corpus, performs character-level tokenization, and creates the final `train.txt` and `val.txt` files.
-    -   **Output:** `dataset/processed/train.txt` and `dataset/processed/val.txt`.
+### Full Pipeline Orchestration
 
-## 4. Training the Model
+-   **Command:** `python3 run.py`
+-   **Purpose:** Executes the entire data pipeline (discover, scrape, clean, prepare) in the correct order.
 
-Once the dataset is processed, you can train the model using the `training/train.py` script, which is configured via YAML files.
+## 4. Model Training
 
-### Configuration (`training/configs/small.yaml`)
+Once the dataset is processed, you can train the model using the `training/train.py` script.
 
-All hyperparameters for the model and training loop are managed via YAML configuration files.
+### Configuration
+
+All hyperparameters for the model and training loop are managed via YAML configuration files in `training/configs/`.
 
 -   **`model`**: Defines the architecture (embedding size, number of heads, layers, etc.).
 -   **`training`**: Defines the training parameters (batch size, learning rate, max steps).
 
-### Running Training
+### Running a Training Job
 
--   **Command:** `python3 training/train.py --config training/configs/small.yaml`
--   **Function:** Starts the training loop using the specified configuration.
--   **Checkpoints:** Model checkpoints are saved periodically to the `out/` directory (by default), allowing for resumable training.
+-   **Command:** `python3 -m training.train --config training/configs/small.yaml`
+-   **Function:** Starts the training loop using the specified configuration. Checkpoints are saved periodically to the `out/` directory.
 
 ### Resuming Training
 
-If training is interrupted, simply run the same command again. The script will automatically detect and load the latest checkpoint from the `out_dir` specified in the config.
+The script will automatically detect and load the latest checkpoint from the `out_dir` specified in the config.
 
-## 5. Generating Text
+## 5. Text Generation
 
 To generate text from a trained model, use the `scripts/generate.py` script.
 
--   **Command:** `python3 scripts/generate.py --max_new_tokens <number>`
+-   **Command:** `python3 -m scripts.generate --max_new_tokens <number>`
 -   **Function:** Loads the latest checkpoint and generates a sample of the specified length.
 
 ## 6. Contribution Workflow
