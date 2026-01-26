@@ -3,6 +3,12 @@ import sys
 import subprocess
 from importlib.metadata import PackageNotFoundError, version
 
+# Bolt Refactor: Directly import the main functions from the data pipeline scripts
+# This is more efficient than using subprocess.run and allows for better integration.
+from scripts.validate_raw import main as validate_raw
+from scripts.clean_dataset import main as clean_dataset
+from scripts.prepare_data import main as prepare_data
+
 
 def check_dependencies():
     """Checks if all the required packages are installed."""
@@ -83,17 +89,17 @@ def main():
 
     if not args.skip_validation:
         print("--- Running Validation ---")
-        subprocess.run(["python3", "scripts/validate_raw.py"], check=True)
+        validate_raw()
         print("--- Validation completed successfully ---\n")
 
     if not args.skip_cleaning:
         print("--- Running Cleaning ---")
-        subprocess.run(["python3", "scripts/clean_dataset.py"], check=True)
+        clean_dataset()
         print("--- Cleaning completed successfully ---\n")
 
     if not args.skip_preparation:
         print("--- Running Preparation ---")
-        subprocess.run(["python3", "scripts/prepare_data.py"], check=True)
+        prepare_data()
         print("--- Preparation completed successfully ---\n")
 
     if not args.skip_training:

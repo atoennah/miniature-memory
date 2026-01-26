@@ -1,0 +1,2 @@
+- The `run.py` orchestrator used inefficient `subprocess.run` calls to execute data pipeline scripts. Refactored to use direct function imports, which is faster and more robust.
+- The `benchmark.py` script was failing due to a `KeyError`. It was not correctly reading the nested configuration from its YAML file. Fixed the script to access the nested keys, unblocking performance verification.
