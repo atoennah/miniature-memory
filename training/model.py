@@ -136,6 +136,30 @@ class CausalSelfAttention(nn.Module):
         self.n_embd = config.n_embd
         self.dropout = config.dropout
 
+    # [INJECTOR: THE EFFICIENCY OF FUSED ATTENTION]
+    #
+    # The line `F.scaled_dot_product_attention` is the single most important performance
+    # component in this model. It is a "fused" kernel, meaning that the entire sequence
+    # of operations (scaling, dot product, softmax, dropout, and value multiplication)
+    # is executed in a single, highly optimized function.
+    #
+    # Why is this revolutionary?
+    # 1.  Memory Efficiency: A naive attention implementation would require creating a
+    #     massive `(T, T)` attention matrix, where T is the sequence length. For a
+    #     `block_size` of 1024, this matrix would contain over a million elements. The
+    #     fused kernel avoids *materializing* this matrix in memory. It computes the
+    #     attention scores and applies them to the value vectors in one pass, often
+    #     using techniques like tiling to keep the memory footprint small. This is the
+    #     core principle behind optimizations like FlashAttention.
+    # 2.  Computational Speed: By fusing the operations, we avoid multiple round-trips
+    #     to global memory. The data stays in faster cache memory for longer, leading
+    #     to a significant speedup. This is true even on CPUs, but the effect is most
+    #     dramatic on GPUs where memory bandwidth is a key bottleneck.
+    #
+    # The `is_causal=True` flag is another critical optimization. It tells the kernel
+    # to apply the causal mask *during* the computation, avoiding the need to create a
+    # separate mask tensor and perform a separate masking operation.
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass for the causal self-attention module."""
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
@@ -361,30 +385,81 @@ class GPT(nn.Module):
         """
         Autoregressively generates a sequence of tokens using top-p (nucleus) sampling.
         """
+        # [INJECTOR: THE ART AND SCIENCE OF TEXT GENERATION - TOP-P SAMPLING]
+        #
+        # Generating coherent and creative text is a nuanced process. Simply picking the
+        # token with the highest probability (greedy decoding) often leads to repetitive
+        # and predictable text. Introducing randomness with temperature scaling helps,
+        # but can also produce nonsensical output if the temperature is too high.
+        #
+        # Top-p (Nucleus) Sampling provides a more sophisticated solution. The core idea is
+        # to focus the sampling on the smallest possible set of tokens (the "nucleus")
+        # whose cumulative probability exceeds a certain threshold `p`.
+        #
+        # Why is this effective?
+        # - It's adaptive: In high-confidence situations where the model is very sure
+        #   about the next token (e.g., after "the cat sat on the"), the nucleus will be
+        #   very small, sometimes containing only one token. This prevents the model from
+        #   picking bizarre alternatives.
+        # - It's creative: In low-confidence situations where the model sees many plausible
+        #   next tokens, the nucleus will be larger. This allows the model to explore
+        #   different creative paths instead of being locked into a single, high-probability
+        #   but potentially boring choice.
+        #
+        # The algorithm below implements this in several steps:
+        # 1.  Get Logits: The model provides the raw scores (logits) for the next token.
+        # 2.  Apply Temperature: The logits are scaled by `temperature`. Lower temperature
+        #     makes the distribution spikier (more confident), higher temperature flattens it.
+        # 3.  Sort Probabilities: The probabilities are sorted in descending order.
+        # 4.  Calculate Cumulative Sum: We compute the cumulative sum of the sorted probs.
+        # 5.  Identify the Nucleus: We find the tokens whose cumulative probability is
+        #     just above `top_p`. All other tokens are discarded.
+        # 6.  Mask and Renormalize: The probabilities of the discarded tokens are set to
+        #     zero, and the remaining probabilities are rescaled so they sum to 1.
+        # 7.  Sample: We draw the next token from this cleaned, renormalized distribution.
+
         self.eval()
         for _ in range(max_new_tokens):
+            # Step 1: Get Logits (and handle context length)
+            # If the sequence gets too long, we crop it to `block_size` to avoid errors.
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
             logits, _ = self(idx_cond)
-            logits = logits[:, -1, :] / temperature
+            # We only care about the logits for the very last token in the sequence.
+            logits = logits[:, -1, :]
 
-            # Top-p (nucleus) sampling
+            # Step 2: Apply Temperature
+            logits = logits / temperature
+
+            # Convert logits to probabilities
             probs = F.softmax(logits, dim=-1)
+
+            # Step 3 & 4: Sort and get cumulative probabilities
             sorted_probs, sorted_indices = torch.sort(probs, descending=True)
             cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
 
-            # Remove tokens with cumulative probability above the threshold
+            # Step 5: Identify the Nucleus
+            # Create a mask for tokens to remove.
             sorted_indices_to_remove = cumulative_probs > top_p
-            # Shift the indices to the right to keep the first token above the threshold
+            # This is a clever trick: we shift the mask to the right. This ensures that
+            # the *first* token whose cumulative probability exceeds `top_p` is *kept*,
+            # while all subsequent tokens are removed.
             sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
             sorted_indices_to_remove[..., 0] = 0
 
+            # Step 6: Mask and Renormalize
+            # Get the original indices of the tokens to be removed.
             indices_to_remove = sorted_indices[sorted_indices_to_remove]
+            # Set the probabilities of these tokens to zero.
             probs[:, indices_to_remove] = 0
 
-            # Renormalize the probabilities
+            # Renormalize the probabilities so they sum to 1 again.
             probs = probs / torch.sum(probs, dim=-1, keepdim=True)
 
+            # Step 7: Sample
+            # Draw the next token from the modified distribution.
             idx_next = torch.multinomial(probs, num_samples=1)
+
+            # Append the sampled token to the sequence and continue.
             idx = torch.cat((idx, idx_next), dim=1)
 
         self.train()
