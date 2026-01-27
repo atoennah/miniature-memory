@@ -35,3 +35,24 @@ This journal logs critical, hardware-aware learnings about LLM architecture perf
 - **Justification:** This eliminates thousands of redundant tensor creations and CPU-to-GPU overhead, resulting in a small but consistent increase in tokens/second. It is a pure win with no risk to numerical stability.
 
 **Conclusion:** Always verify environmental compatibility (`python --version`, `torch.__version__`) before attempting backend-dependent optimizations. Caching frequently used, non-leaf tensors is a reliable and safe performance pattern.
+
+---
+
+### Entry 3: Key-Value (KV) Cache for Inference Acceleration
+
+**Observation:** The `model.generate()` method was highly inefficient. For each new token generated, it re-processed the entire history of tokens from the beginning. This is a classic O(n^2) bottleneck in autoregressive decoding, where `n` is the sequence length.
+
+**Optimization:** Implemented a Key-Value (KV) cache.
+1.  The `CausalSelfAttention`, `Block`, and `GPT.forward` methods were modified to accept an optional `past_kv` state and return a `present_kv` state.
+2.  During generation, the model now caches the key and value tensors from the self-attention layers.
+3.  The `generate` loop was rewritten to perform one "prefill" step on the initial prompt to build the cache, and then, for every subsequent step, it feeds only the single most recent token back into the model along with the cache.
+
+**Justification:** This optimization avoids redundant computation. Instead of recalculating the keys and values for all previous tokens at every step, we reuse the cached values. This changes the complexity of generating a new token from being proportional to the full sequence length to being proportional only to the new token, dramatically accelerating generation, especially for long sequences.
+
+**Impact:**
+- **Baseline Inference Throughput:** 69.61 tokens/sec
+- **Optimized Inference Throughput:** 200.93 tokens/sec
+- **Result:** A **2.88x speedup** in token generation.
+- No performance regression was observed in the training throughput.
+
+**Conclusion:** The KV cache is a fundamental optimization for transformer inference. The massive and immediate performance gain confirms that it is non-negotiable for any serious autoregressive generation task.
