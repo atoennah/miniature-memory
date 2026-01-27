@@ -79,7 +79,8 @@ def run_validation(raw_data_dir):
     print(f"  Passed: {validated_count}")
     print(f"  Failed: {failed_count}")
 
-if __name__ == "__main__":
+def main():
+    """Main function to run the validation script."""
     parser = argparse.ArgumentParser(
         description="Validate raw text files in the dataset."
     )
@@ -91,3 +92,6 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     run_validation(args.raw_data_dir)
+
+if __name__ == "__main__":
+    main()

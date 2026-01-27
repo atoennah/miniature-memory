@@ -94,7 +94,8 @@ def run_cleaning(raw_dir, cleaned_dir):
     print(f"  Cleaned: {cleaned_count}")
     print(f"  Skipped/Errors: {skipped_count}")
 
-if __name__ == "__main__":
+def main():
+    """Main function to run the cleaning script."""
     parser = argparse.ArgumentParser(
         description="Clean raw text files and save them to a new directory."
     )
@@ -112,3 +113,6 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     run_cleaning(args.raw_dir, args.cleaned_dir)
+
+if __name__ == "__main__":
+    main()

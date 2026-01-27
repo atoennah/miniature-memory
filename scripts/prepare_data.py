@@ -51,7 +51,8 @@ def run_preparation(cleaned_dir, processed_dir):
     except Exception as e:
         print(f"\n[❌ ERROR] An error occurred during data preparation: {e}")
 
-if __name__ == "__main__":
+def main():
+    """Main function to run the data preparation script."""
     parser = argparse.ArgumentParser(
         description="Prepare cleaned data for training by concatenating it into a single file."
     )
@@ -69,3 +70,6 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     run_preparation(args.cleaned_dir, args.processed_dir)
+
+if __name__ == "__main__":
+    main()
