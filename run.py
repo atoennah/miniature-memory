@@ -30,12 +30,26 @@ def check_dependencies():
         print("\nPlease install them by running: pip install -r requirements.txt", file=sys.stderr)
         sys.exit(1)
 
+# Import data pipeline scripts
+from scripts import validate_raw, clean_dataset, prepare_data
+
+# Import training scripts
+from training import train
+
 def main():
     """
-    Main function to run the miniature-memory data and training pipeline.
+    A unified orchestrator for the miniature-memory data and training pipeline.
 
-    This script orchestrates the validation, cleaning, preparation, and training
-    stages. Each stage can be skipped via command-line arguments.
+    This script provides a single, efficient entry point for running the entire
+    pipeline. Instead of using inefficient subprocess calls, it directly imports
+    and executes the main logic from the relevant Python modules. This creates a
+    more cohesive and performant application.
+
+    Pipeline Stages:
+    1.  Validation:   Scans and validates raw text files.
+    2.  Cleaning:     Cleans and sanitizes the validated text.
+    3.  Preparation:  Concatenates cleaned files into a final training corpus.
+    4.  Training:     Runs the GPT model training loop.
     """
     parser = argparse.ArgumentParser(
         description="A unified script to run the miniature-memory pipeline."
@@ -81,29 +95,27 @@ def main():
 
     print("Starting the miniature-memory pipeline...\n")
 
+    # --- Data Processing Pipeline ---
+    # Each script is now an importable module with a main() function.
     if not args.skip_validation:
         print("--- Running Validation ---")
-        subprocess.run(["python3", "scripts/validate_raw.py"], check=True)
+        validate_raw.main()
         print("--- Validation completed successfully ---\n")
 
     if not args.skip_cleaning:
         print("--- Running Cleaning ---")
-        subprocess.run(["python3", "scripts/clean_dataset.py"], check=True)
+        clean_dataset.main()
         print("--- Cleaning completed successfully ---\n")
 
     if not args.skip_preparation:
         print("--- Running Preparation ---")
-        subprocess.run(["python3", "scripts/prepare_data.py"], check=True)
+        prepare_data.main()
         print("--- Preparation completed successfully ---\n")
 
+    # --- Model Training ---
     if not args.skip_training:
         print("--- Running Training ---")
-        # Note: training/train.py is not yet a standalone script, so we keep the import for now.
-        try:
-            from training.train import main as run_training
-            run_training()
-        except ImportError:
-            _handle_import_error("training.train")
+        train.main()
         print("--- Training completed successfully ---\n")
 
     print("Pipeline finished.")
