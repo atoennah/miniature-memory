@@ -10,31 +10,60 @@ import argparse
 import os
 import yaml
 import torch
+import torch.nn as nn
 from typing import Dict, Any
 
 from .data_loader import DataManager
+from .model import GPT, GPTConfig
 from .trainer import Trainer
+
+
+def _build_model(config: Dict[str, Any], data_manager: DataManager) -> nn.Module:
+    """Builds the GPT model based on the configuration."""
+    model_config = config['model']
+    gpt_config = GPTConfig(
+        vocab_size=data_manager.vocab_size,
+        block_size=model_config['block_size'],
+        n_layer=model_config['n_layer'],
+        n_head=model_config['n_head'],
+        n_embd=model_config['n_embd'],
+        dropout=model_config['dropout']
+    )
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    return GPT(gpt_config).to(device)
+
+
+
 
 def run_training(config: Dict[str, Any]) -> None:
     """
     Orchestrates the model training process.
-
-    This function initializes the data manager and the trainer, then
-    starts the training loop.
-
+    This function initializes the data manager, model, and optimizer,
+    then starts the training loop.
     Args:
         config: A dictionary containing the training configuration.
     """
-    # Initialize the data manager
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     data_manager = DataManager(
         data_path=config['data']['path'],
         block_size=config['model']['block_size'],
         batch_size=config['training']['batch_size'],
-        device='cuda' if torch.cuda.is_available() else 'cpu'
+        device=device
     )
 
-    # Initialize and run the trainer
-    trainer = Trainer(config=config, data_manager=data_manager)
+    model = _build_model(config, data_manager)
+    optimizer = model.configure_optimizers(
+        weight_decay=config['training']['weight_decay'],
+        learning_rate=config['training']['learning_rate'],
+        betas=(config['training']['beta1'], config['training']['beta2'])
+    )
+
+    trainer = Trainer(
+        config=config,
+        model=model,
+        optimizer=optimizer,
+        data_manager=data_manager
+    )
     trainer.run()
 
 

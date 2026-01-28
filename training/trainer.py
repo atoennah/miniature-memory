@@ -37,10 +37,40 @@ import time
 import math
 import torch
 import torch.nn as nn
-from typing import Dict, Any, Optional
+import logging
+from typing import Dict, Any, Optional, ContextManager
 
 from .data_loader import DataManager
-from .model import GPT, GPTConfig
+
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+
+class PrecisionManager:
+    """
+    Manages mixed-precision training settings.
+    This helper class abstracts away the device-specific logic for mixed-precision
+    training, providing a clean interface for using `autocast` and `GradScaler`.
+    """
+    def __init__(self, device: str):
+        self.device = device
+        self.dtype = torch.float16 if device == 'cuda' else torch.bfloat16
+        self.enabled = (self.device == 'cuda') # bfloat16 CPU is too slow
+
+    def get_autocast(self) -> ContextManager:
+        """Returns the autocast context manager for the current device."""
+        return torch.amp.autocast(
+            device_type=self.device,
+            dtype=self.dtype,
+            enabled=self.enabled
+        )
+
+    def get_scaler(self) -> torch.cuda.amp.GradScaler:
+        """Returns a GradScaler for mixed-precision training."""
+        return torch.cuda.amp.GradScaler(enabled=self.enabled)
+
 
 class Trainer:
     """
@@ -55,82 +85,26 @@ class Trainer:
         optimizer (torch.optim.Optimizer): The optimizer for the model.
     """
 
-    def __init__(self, config: Dict[str, Any], data_manager: DataManager):
-        """Initializes the Trainer.
+    def __init__(self,
+                 config: Dict[str, Any],
+                 model: nn.Module,
+                 optimizer: torch.optim.Optimizer,
+                 data_manager: DataManager):
+        """
+        Initializes the Trainer.
         Args:
             config: The configuration dictionary.
+            model: The model to be trained.
+            optimizer: The optimizer for the model.
             data_manager: The data manager instance.
         """
         self.config = config
+        self.model = model
+        self.optimizer = optimizer
         self.data_manager = data_manager
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        print(f"Using device: {self.device}")
-
-        # Initialize model and optimizer
-        self.model = self._build_model()
-        self.optimizer = self._build_optimizer()
-
-    def _build_model(self) -> nn.Module:
-        """Builds the GPT model based on the configuration."""
-        model_config = self.config['model']
-        gpt_config = GPTConfig(
-            vocab_size=self.data_manager.vocab_size,
-            block_size=model_config['block_size'],
-            n_layer=model_config['n_layer'],
-            n_head=model_config['n_head'],
-            n_embd=model_config['n_embd'],
-            dropout=model_config['dropout']
-        )
-        return GPT(gpt_config).to(self.device)
-
-    def _build_optimizer(self) -> torch.optim.Optimizer:
-        """
-        Builds the AdamW optimizer with a sophisticated weight decay strategy.
-        This method separates model parameters into two groups: those that will
-        experience weight decay and those that will not. Typically, biases,
-        LayerNorm weights, and Embedding weights are not weight-decayed.
-        This helps prevent overfitting without harming model performance.
-        Returns:
-            torch.optim.Optimizer: The configured AdamW optimizer.
-        """
-        decay = set()
-        no_decay = set()
-        whitelist_weight_modules = (torch.nn.Linear, )
-        blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding)
-
-        # Iterate over all named modules and their parameters
-        for mn, m in self.model.named_modules():
-            for pn, p in m.named_parameters():
-                fpn = '%s.%s' % (mn, pn) if mn else pn
-
-                # Biases are never decayed
-                if pn.endswith('bias'):
-                    no_decay.add(fpn)
-                # Weights of linear layers are decayed
-                elif pn.endswith('weight') and isinstance(m, whitelist_weight_modules):
-                    decay.add(fpn)
-                # Weights of LayerNorm and Embedding are not decayed
-                elif pn.endswith('weight') and isinstance(m, blacklist_weight_modules):
-                    no_decay.add(fpn)
-
-        # Sanity checks to ensure every parameter is in one of the sets
-        param_dict = {pn: p for pn, p in self.model.named_parameters()}
-        inter_params = decay & no_decay
-        union_params = decay | no_decay
-        assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
-        assert len(param_dict.keys() - union_params) == 0, "Parameters not in decay/no_decay sets"
-
-        optim_groups = [
-            {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": self.config['training']['weight_decay']},
-            {"params": [param_dict[pn] for pn in sorted(list(no_decay))], "weight_decay": 0.0},
-        ]
-
-        learning_rate = self.config['training']['learning_rate']
-        beta1 = self.config['training']['beta1']
-        beta2 = self.config['training']['beta2']
-        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=(beta1, beta2))
-
-        return optimizer
+        self.precision_manager = PrecisionManager(self.device)
+        logger.info(f"Using device: {self.device}")
 
     def _get_lr(self, it: int) -> float:
         """
@@ -182,8 +156,8 @@ class Trainer:
         grad_clip = self.config['training'].get('grad_clip', 1.0)
         xb, yb = self.data_manager.get_batch()
 
-        with torch.amp.autocast(device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')):
-            _, loss = self.model(xb, yb)
+        with self.precision_manager.get_autocast():
+            _, loss, _ = self.model(xb, yb)
 
         self.optimizer.zero_grad(set_to_none=True)
         scaler.scale(loss).backward()
@@ -206,10 +180,10 @@ class Trainer:
             lr: The learning rate for the current step.
         """
         max_steps = self.config['training']['max_steps']
+        log_msg = f"Step {step:4d}/{max_steps}: Loss: {loss.item():.4f}"
         if lr is not None:
-            print(f"Step {step:4d}/{max_steps}: Loss: {loss.item():.4f}, LR: {lr:.6f}")
-        else:
-            print(f"Step {step:4d}/{max_steps}: Loss: {loss.item():.4f}")
+            log_msg += f", LR: {lr:.6f}"
+        logger.info(log_msg)
 
     def run(self) -> None:
         """
@@ -217,13 +191,13 @@ class Trainer:
         This method orchestrates the training process, including learning rate
         scheduling, executing training steps, and logging progress.
         """
-        print("\nStarting training...")
+        logger.info("Starting training...")
         start_time = time.time()
         max_steps = self.config['training']['max_steps']
         eval_interval = self.config['training']['eval_interval']
         decay_lr = self.config['training'].get('decay_lr', False)
 
-        scaler = torch.cuda.amp.GradScaler(enabled=(self.device == 'cuda'))
+        scaler = self.precision_manager.get_scaler()
 
         for step in range(max_steps):
             lr = self._update_lr(step) if decay_lr else None
@@ -234,7 +208,7 @@ class Trainer:
 
         end_time = time.time()
         duration = end_time - start_time
-        print(f"Training finished in {duration:.2f} seconds.")
+        logger.info(f"Training finished in {duration:.2f} seconds.")
         self._save_checkpoint()
 
     def _save_checkpoint(self) -> None:
@@ -243,4 +217,4 @@ class Trainer:
         os.makedirs(output_dir, exist_ok=True)
         checkpoint_path = os.path.join(output_dir, 'model.pt')
         torch.save(self.model.state_dict(), checkpoint_path)
-        print(f"\nModel checkpoint saved to: {checkpoint_path}")
+        logger.info(f"Model checkpoint saved to: {checkpoint_path}")
