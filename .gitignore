@@ -136,3 +136,7 @@ cython_debug/
 /dataset/processed/
 /dataset/rejected/
 /training/checkpoints/
+
+# Ignore model checkpoints and output directories
+*.pt
+out*/
