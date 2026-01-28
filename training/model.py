@@ -40,6 +40,43 @@ from torch.nn import functional as F
 from typing import Optional, Tuple
 
 class GPTConfig:
+    # [INJECTOR: THE ARCHITECTURAL BLUEPRINT OF A TRANSFORMER]
+    #
+    # This configuration object is more than just a set of parameters; it is the
+    # blueprint that defines the size, shape, and capacity of the GPT model. The interplay
+    # between these numbers dictates the model's ability to learn and the computational
+    # resources required to train it.
+    #
+    # -   `vocab_size`: The size of the dictionary. This determines the width of the
+    #     input (embedding) and output (logit) layers.
+    #
+    # -   `block_size`: The context window. This is the maximum number of tokens the
+    #     model can "see" at once when making a prediction. A larger `block_size`
+    #     allows the model to capture longer-range dependencies in the text but
+    #     increases the computational and memory cost quadratically in the attention
+    #     mechanism.
+    #
+    # -   `n_layer`: The depth of the model. This is the number of Transformer Blocks
+    #     stacked on top of each other. More layers allow the model to build more
+    #     abstract and complex representations of the input. Each layer adds
+    #     computational cost and increases the risk of vanishing/exploding gradients,
+    #     which is mitigated by residual connections.
+    #
+    # -   `n_head`: The number of attention heads. The self-attention mechanism is
+    #     split into multiple "heads" to allow the model to jointly attend to
+    #     information from different representational subspaces. For example, one
+    #     head might focus on syntactic relationships while another focuses on
+    #     semantic similarity. `n_embd` must be divisible by `n_head`.
+    #
+    # -   `n_embd`: The embedding dimension. This is the primary width of the model.
+    #     It's the size of the vectors used to represent tokens and their positions
+    #     throughout the model. A larger `n_embd` provides more representational
+    #     capacity but increases the parameter count and computational cost.
+    #
+    # -   `dropout`: A regularization technique. During training, a random fraction
+    #     of neurons are "dropped" or ignored. This prevents the model from becoming
+    #     too reliant on any single neuron and helps it generalize better to unseen
+    #     data.
     """Configuration for the GPT model."""
     def __init__(self, vocab_size: int, block_size: int, n_layer: int, n_head: int, n_embd: int, dropout: float):
         self.vocab_size = vocab_size
@@ -363,28 +400,78 @@ class GPT(nn.Module):
         """
         self.eval()
         for _ in range(max_new_tokens):
+            # [INJECTOR: CONTEXT MANAGEMENT FOR GENERATION]
+            #
+            # The model has a fixed `block_size` (context window). If the input sequence
+            # `idx` is longer than this, we must truncate it to the last `block_size`
+            # tokens. This is because the positional embeddings are only defined up to
+            # this length. Failing to truncate would result in an out-of-bounds error.
+            # This sliding window approach allows the model to generate sequences of
+            # arbitrary length, albeit with a limited memory of the past.
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+
+            # Get the logits from the model
             logits, _ = self(idx_cond)
+
+            # [INJECTOR: THE ROLE OF TEMPERATURE]
+            #
+            # Temperature is a hyperparameter that controls the randomness of the
+            # sampling process. It is applied *before* the softmax function.
+            # -   `temperature` > 1.0: Makes the distribution flatter, increasing the
+            #     likelihood of sampling less probable tokens. This leads to more
+            #     "creative" and diverse, but potentially less coherent, text.
+            # -   `temperature` < 1.0: Makes the distribution peakier, increasing the
+            #     likelihood of sampling the most probable tokens. This leads to more
+            #     "safe" and predictable text.
+            # -   `temperature` = 1.0: No effect on the probabilities.
             logits = logits[:, -1, :] / temperature
 
-            # Top-p (nucleus) sampling
+            # [INJECTOR: THE THEORY OF NUCLEUS SAMPLING (TOP-P)]
+            #
+            # Standard sampling from a language model's output distribution can be
+            # problematic. Top-k sampling, for instance, restricts the sampling pool to
+            # the `k` most likely tokens, but this can be too restrictive if the true
+            # distribution is flat, or too permissive if it's sharply peaked.
+            #
+            # Nucleus sampling provides a more adaptive approach. Instead of choosing a
+            # fixed number `k` of tokens, we choose the smallest set of tokens whose
+            # cumulative probability is greater than or equal to a threshold `p`. This
+            # set is called the "nucleus."
+            #
+            # The algorithm is as follows:
+            # 1.  Compute the probability distribution for the next token using softmax.
+            # 2.  Sort the tokens in descending order of their probabilities.
+            # 3.  Compute the cumulative sum of these sorted probabilities.
+            # 4.  Find the tokens whose cumulative probability exceeds `top_p`. These
+            #     are the tokens that fall outside the nucleus.
+            # 5.  Mask out these tokens by setting their probabilities to zero.
+            # 6.  Renormalize the remaining probabilities so they sum to 1.
+            # 7.  Sample from this new, truncated distribution.
+            #
+            # This method ensures that the number of tokens considered for sampling is
+            # dynamically adjusted based on the shape of the probability distribution,
+            # leading to higher-quality text generation.
             probs = F.softmax(logits, dim=-1)
             sorted_probs, sorted_indices = torch.sort(probs, descending=True)
             cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
 
-            # Remove tokens with cumulative probability above the threshold
+            # Find the indices to remove
             sorted_indices_to_remove = cumulative_probs > top_p
             # Shift the indices to the right to keep the first token above the threshold
             sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
             sorted_indices_to_remove[..., 0] = 0
 
+            # Get the original indices of the tokens to remove
             indices_to_remove = sorted_indices[sorted_indices_to_remove]
             probs[:, indices_to_remove] = 0
 
             # Renormalize the probabilities
             probs = probs / torch.sum(probs, dim=-1, keepdim=True)
 
+            # Sample the next token from the modified distribution
             idx_next = torch.multinomial(probs, num_samples=1)
+
+            # Append the sampled token to the sequence
             idx = torch.cat((idx, idx_next), dim=1)
 
         self.train()
