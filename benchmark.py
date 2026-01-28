@@ -17,19 +17,19 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
 
     config = GPTConfig(
         vocab_size=vocab_size,
-        block_size=config_data['block_size'],
-        n_layer=config_data['n_layer'],
-        n_head=config_data['n_head'],
-        n_embd=config_data['n_embd'],
-        dropout=config_data['dropout']
+        block_size=config_data['model']['block_size'],
+        n_layer=config_data['model']['n_layer'],
+        n_head=config_data['model']['n_head'],
+        n_embd=config_data['model']['n_embd'],
+        dropout=config_data['model']['dropout']
     )
 
     model = GPT(config)
     model.eval() # Set to eval mode to disable dropout for benchmark
 
     # Generate dummy data
-    batch_size = config_data['batch_size']
-    block_size = config_data['block_size']
+    batch_size = config_data['training']['batch_size']
+    block_size = config_data['model']['block_size']
     dummy_input = torch.randint(0, vocab_size, (batch_size, block_size))
     dummy_target = torch.randint(0, vocab_size, (batch_size, block_size))
 
@@ -39,12 +39,12 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
 
     # Warmup phase
     for _ in range(warmup_steps):
-        _, _ = model(dummy_input, dummy_target)
+        _, _, _ = model(dummy_input, dummy_target)
 
     # Benchmark phase
     start_time = time.time()
     for _ in range(num_steps):
-        _, _ = model(dummy_input, dummy_target)
+        _, _, _ = model(dummy_input, dummy_target)
     end_time = time.time()
 
     # Calculate throughput
@@ -53,7 +53,7 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     total_tokens = num_steps * tokens_per_step
     tokens_per_second = total_tokens / total_time
 
-    print(f"--- Benchmark Results ---")
+    print(f"--- Training Benchmark Results ---")
     print(f"Configuration: {config_path}")
     print(f"Steps: {num_steps}")
     print(f"Batch Size: {batch_size}")
@@ -61,8 +61,58 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     print(f"Total Tokens: {total_tokens}")
     print(f"Total Time: {total_time:.2f} seconds")
     print(f"Throughput: {tokens_per_second:.2f} tokens/sec")
-    print(f"-----------------------")
+    print(f"---------------------------------")
     return tokens_per_second
 
+
+def benchmark_inference(config_path='training/configs/benchmark.yaml'):
+    """
+    Benchmarks the inference throughput of the GPT model's generate method.
+    """
+    # Load configuration from YAML
+    with open(config_path, 'r') as f:
+        config_data = yaml.safe_load(f)
+
+    vocab_size = 512
+
+    config = GPTConfig(
+        vocab_size=vocab_size,
+        block_size=config_data['model']['block_size'],
+        n_layer=config_data['model']['n_layer'],
+        n_head=config_data['model']['n_head'],
+        n_embd=config_data['model']['n_embd'],
+        dropout=config_data['model']['dropout']
+    )
+
+    model = GPT(config)
+    model.eval()
+
+    # Generate a dummy prompt
+    prompt = torch.randint(0, vocab_size, (1, 10)) # Batch size of 1, 10 tokens long
+    max_new_tokens = 100
+
+    # Warmup
+    _ = model.generate(prompt, max_new_tokens=10)
+
+    # Benchmark
+    start_time = time.time()
+    _ = model.generate(prompt, max_new_tokens=max_new_tokens)
+    end_time = time.time()
+
+    total_time = end_time - start_time
+    tokens_per_second = max_new_tokens / total_time
+
+    print(f"--- Inference Benchmark Results ---")
+    print(f"Configuration: {config_path}")
+    print(f"Generated Tokens: {max_new_tokens}")
+    print(f"Total Time: {total_time:.2f} seconds")
+    print(f"Throughput: {tokens_per_second:.2f} tokens/sec")
+    print(f"-----------------------------------")
+    return tokens_per_second
+
+
 if __name__ == "__main__":
+    print("Running Training Benchmark...")
     run_benchmark()
+    print("\nRunning Inference Benchmark...")
+    benchmark_inference()

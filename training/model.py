@@ -136,7 +136,7 @@ class CausalSelfAttention(nn.Module):
         self.n_embd = config.n_embd
         self.dropout = config.dropout
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """Forward pass for the causal self-attention module."""
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
@@ -182,8 +182,17 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
+        # KV cache
+        if past_kv is not None:
+            past_key, past_value = past_kv
+            k = torch.cat((past_key, k), dim=-2)
+            v = torch.cat((past_value, v), dim=-2)
+        present_kv = (k, v)
+
         # Causal self-attention using PyTorch's fused kernel
-        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+        # The causal mask is only needed for the initial prompt (when T > 1)
+        is_causal = T > 1
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=is_causal)
 
         # Re-assemble all head outputs side by side
         # (B, nh, T, hs) -> (B, T, nh, hs) -> (B, T, C)
@@ -191,7 +200,7 @@ class CausalSelfAttention(nn.Module):
 
         # Output projection
         y = self.resid_dropout(self.c_proj(y))
-        return y
+        return y, present_kv
 
 class Block(nn.Module):
     # [INJECTOR: THE ARCHITECTURE OF A TRANSFORMER BLOCK]
@@ -221,7 +230,7 @@ class Block(nn.Module):
     #     we adopt the "Pre-LN" architecture. This has been found to be more stable and
     #     effective for training very deep Transformers than the original "Post-LN"
     #     variant where normalization was applied after the residual connection.
-    """A single Transformer block."""
+    """A single Transformer block with KV caching support."""
     def __init__(self, config: GPTConfig):
         super().__init__()
         self.ln_1 = nn.LayerNorm(config.n_embd)
@@ -229,11 +238,12 @@ class Block(nn.Module):
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = FeedForward(config)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """Forward pass for a Transformer block."""
-        x = x + self.attn(self.ln_1(x))
+        attn_output, present_kv = self.attn(self.ln_1(x), past_kv=past_kv)
+        x = x + attn_output
         x = x + self.mlp(self.ln_2(x))
-        return x
+        return x, present_kv
 
 class GPT(nn.Module):
     """A GPT-style transformer model."""
@@ -330,7 +340,7 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None, past_kv: Optional[list] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor], list]:
         """Forward pass for the GPT model."""
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
@@ -342,8 +352,10 @@ class GPT(nn.Module):
         x = self.transformer.drop(tok_emb + pos_emb)
 
         # Transformer blocks
-        for block in self.transformer.h:
-            x = block(x)
+        presents = []
+        for i, block in enumerate(self.transformer.h):
+            x, present_kv = block(x, past_kv[i] if past_kv is not None else None)
+            presents.append(present_kv)
 
         # Final layer norm and language model head
         x = self.transformer.ln_f(x)
@@ -354,38 +366,54 @@ class GPT(nn.Module):
             # if we are given some desired targets also calculate the loss
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
-        return logits, loss
+        return logits, loss, presents
 
     @torch.no_grad()
     def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_p: float = 0.9) -> torch.Tensor:
         """
-        Autoregressively generates a sequence of tokens using top-p (nucleus) sampling.
+        Autoregressively generates a sequence of tokens using KV caching and top-p sampling.
         """
         self.eval()
+        past_kv = None
+
+        # The input to the model on the first iteration is the full prompt
+        current_idx = idx
+
         for _ in range(max_new_tokens):
-            idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
-            logits, _ = self(idx_cond)
-            logits = logits[:, -1, :] / temperature
+            # Forward pass. On the first iteration, this is the prefill.
+            # On subsequent iterations, it's the decode step.
+            logits, _, past_kv = self(current_idx, past_kv=past_kv)
 
-            # Top-p (nucleus) sampling
-            probs = F.softmax(logits, dim=-1)
-            sorted_probs, sorted_indices = torch.sort(probs, descending=True)
-            cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+            # Sample the next token from the last logit of the sequence we just processed.
+            idx_next = self._sample_next_token(logits[:, -1, :], temperature, top_p)
 
-            # Remove tokens with cumulative probability above the threshold
-            sorted_indices_to_remove = cumulative_probs > top_p
-            # Shift the indices to the right to keep the first token above the threshold
-            sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-            sorted_indices_to_remove[..., 0] = 0
-
-            indices_to_remove = sorted_indices[sorted_indices_to_remove]
-            probs[:, indices_to_remove] = 0
-
-            # Renormalize the probabilities
-            probs = probs / torch.sum(probs, dim=-1, keepdim=True)
-
-            idx_next = torch.multinomial(probs, num_samples=1)
+            # Append the new token to our sequence
             idx = torch.cat((idx, idx_next), dim=1)
+
+            # The input for the *next* iteration is just the token we just generated.
+            current_idx = idx_next
 
         self.train()
         return idx
+
+    def _sample_next_token(self, logits: torch.Tensor, temperature: float, top_p: float) -> torch.Tensor:
+        """Helper function to sample the next token using top-p sampling."""
+        logits = logits / temperature
+
+        # Top-p (nucleus) sampling
+        probs = F.softmax(logits, dim=-1)
+        sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+        cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+
+        # Remove tokens with cumulative probability above the threshold
+        sorted_indices_to_remove = cumulative_probs > top_p
+        sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+        sorted_indices_to_remove[..., 0] = 0
+
+        indices_to_remove = sorted_indices[sorted_indices_to_remove]
+        probs[:, indices_to_remove] = 0
+
+        # Renormalize the probabilities
+        probs = probs / torch.sum(probs, dim=-1, keepdim=True)
+
+        return torch.multinomial(probs, num_samples=1)
