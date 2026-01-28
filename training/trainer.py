@@ -115,13 +115,18 @@ class Trainer:
 
         # Sanity checks to ensure every parameter is in one of the sets
         param_dict = {pn: p for pn, p in self.model.named_parameters()}
+
+        # The lm_head.weight is tied to the token embedding weight, so it's already in the no_decay set.
+        # We need to filter it out from the decay set to avoid duplicates.
+        decay = decay - {'lm_head.weight'}
+
         inter_params = decay & no_decay
         union_params = decay | no_decay
         assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
         assert len(param_dict.keys() - union_params) == 0, "Parameters not in decay/no_decay sets"
 
         optim_groups = [
-            {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": self.config['training']['weight_decay']},
+            {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": self.config['training'].get('weight_decay', 1e-1)},
             {"params": [param_dict[pn] for pn in sorted(list(no_decay))], "weight_decay": 0.0},
         ]
 
