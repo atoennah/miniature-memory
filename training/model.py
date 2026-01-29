@@ -185,6 +185,38 @@ class CausalSelfAttention(nn.Module):
         # Causal self-attention using PyTorch's fused kernel
         y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
 
+        # [INJECTOR: MANUAL IMPLEMENTATION FOR PEDAGOGY]
+        #
+        # For educational clarity, the manual implementation of causal self-attention
+        # is presented below. The fused `F.scaled_dot_product_attention` is highly
+        # optimized and should be used in practice, but understanding the underlying
+        # operations is crucial.
+        #
+        # B, nh, T, hs = q.shape
+        #
+        # # 1. Calculate attention scores ("affinities")
+        # # (B, nh, T, hs) @ (B, nh, hs, T) -> (B, nh, T, T)
+        # att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+        #
+        # # 2. Apply causal mask
+        # # `tril` creates a lower-triangular matrix. `masked_fill` replaces all
+        # # elements where the condition is True (i.e., the upper triangle) with -inf.
+        # mask = torch.tril(torch.ones(T, T, device=q.device)).view(1, 1, T, T)
+        # att = att.masked_fill(mask == 0, float('-inf'))
+        #
+        # # 3. Apply softmax to get weights
+        # att = F.softmax(att, dim=-1)
+        #
+        # # 4. Apply dropout
+        # att = F.dropout(att, p=self.dropout, training=self.training)
+        #
+        # # 5. Weighted sum of values
+        # # (B, nh, T, T) @ (B, nh, T, hs) -> (B, nh, T, hs)
+        # y = att @ v
+        #
+        # The result `y` from this manual calculation would be identical in shape and
+        # (approximately) in value to the output of the fused kernel.
+
         # Re-assemble all head outputs side by side
         # (B, nh, T, hs) -> (B, T, nh, hs) -> (B, T, C)
         y = y.transpose(1, 2).contiguous().view(B, T, C)
@@ -358,6 +390,44 @@ class GPT(nn.Module):
 
     @torch.no_grad()
     def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_p: float = 0.9) -> torch.Tensor:
+        # [INJECTOR: THE ART & SCIENCE OF DECODING STRATEGIES]
+        #
+        # Generating text from a language model is a creative process, and the choice
+        # of decoding strategy profoundly impacts the quality and nature of the output.
+        #
+        # 1.  Greedy Decoding (The Simplest):
+        #     - At each step, simply choose the token with the highest probability (logit).
+        #     - Problem: It's deterministic and often leads to repetitive, boring, and
+        #       predictable text. It can easily get stuck in loops.
+        #
+        # 2.  Temperature Sampling:
+        #     - We introduce a `temperature` parameter to control the "randomness" of the
+        #       output. The logits are divided by the temperature before the softmax.
+        #     - `temperature < 1.0`: Makes the distribution sharper, increasing the
+        #       likelihood of high-probability tokens. The output becomes more focused
+        #       and deterministic, closer to greedy decoding.
+        #     - `temperature > 1.0`: Makes the distribution flatter, increasing the
+        #       likelihood of low-probability tokens. The output becomes more surprising
+        #       and creative, but also risks being nonsensical.
+        #
+        # 3.  Top-P (Nucleus) Sampling (The Goldilocks Zone):
+        #     - This is the strategy implemented here, and it's a significant improvement
+        #       over the other two. Instead of considering all tokens or just the top one,
+        #       it focuses on the smallest possible set of tokens whose cumulative
+        #       probability exceeds a threshold `top_p`.
+        #     - How it works:
+        #         a. Sort the probabilities in descending order.
+        #         b. Sum them up cumulatively.
+        #         c. Find the point where the cumulative sum exceeds `top_p`.
+        #         d. All tokens *after* this point are discarded.
+        #         e. The remaining tokens (the "nucleus") are renormalized and sampled from.
+        #     - Why it's better: It's adaptive. For "high-confidence" predictions where
+        #       the model is sure about the next token (e.g., after "President of the
+        #       United States, Joe..."), the nucleus will be very small, perhaps just
+        #       {"Biden"}. For "low-confidence" predictions where many words could fit,
+        #       the nucleus will be larger, allowing for more creativity. This avoids the
+        #       pitfalls of temperature sampling, which can produce gibberish by giving
+        #       too much weight to unlikely tokens.
         """
         Autoregressively generates a sequence of tokens using top-p (nucleus) sampling.
         """
@@ -365,25 +435,44 @@ class GPT(nn.Module):
         for _ in range(max_new_tokens):
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
             logits, _ = self(idx_cond)
+            # Apply temperature scaling.
             logits = logits[:, -1, :] / temperature
 
-            # Top-p (nucleus) sampling
+            # [INJECTOR: STEP-BY-STEP NUCLEUS SAMPLING]
+
+            # 1. Convert logits to probabilities via softmax.
             probs = F.softmax(logits, dim=-1)
+
+            # 2. Sort probabilities in descending order and get their original indices.
+            # This is the core of identifying the "nucleus" of the most likely tokens.
             sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+
+            # 3. Calculate the cumulative sum of sorted probabilities. This will allow us
+            # to find the smallest set of tokens whose cumulative probability is >= top_p.
             cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
 
-            # Remove tokens with cumulative probability above the threshold
+            # 4. Create a mask to identify tokens to remove.
+            # `cumulative_probs > top_p` gives us all tokens *after* the nucleus.
             sorted_indices_to_remove = cumulative_probs > top_p
-            # Shift the indices to the right to keep the first token above the threshold
+
+            # 5. Important edge case: we must keep at least one token. We shift the mask
+            # to the right, ensuring that the first token (the most likely one) is never
+            # removed, even if its probability alone exceeds top_p.
             sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
             sorted_indices_to_remove[..., 0] = 0
 
+            # 6. Get the original indices of the tokens to be removed by gathering from
+            # the `sorted_indices` tensor.
             indices_to_remove = sorted_indices[sorted_indices_to_remove]
+
+            # 7. Zero out the probabilities of the tokens to be removed.
             probs[:, indices_to_remove] = 0
 
-            # Renormalize the probabilities
+            # 8. Renormalize the probability distribution so that the remaining tokens
+            # (the nucleus) sum to 1.
             probs = probs / torch.sum(probs, dim=-1, keepdim=True)
 
+            # 9. Sample the next token from the renormalized distribution.
             idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, idx_next), dim=1)
 
