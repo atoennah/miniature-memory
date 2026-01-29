@@ -76,9 +76,7 @@ def main():
 
     check_dependencies()
 
-    # Pass the unknown arguments to the training script
-    sys.argv = [sys.argv[0]] + unknown
-
+    # Unknown arguments will be passed to the training script via subprocess.
     print("Starting the miniature-memory pipeline...\n")
 
     if not args.skip_validation:
@@ -98,12 +96,12 @@ def main():
 
     if not args.skip_training:
         print("--- Running Training ---")
-        # Note: training/train.py is not yet a standalone script, so we keep the import for now.
-        try:
-            from training.train import main as run_training
-            run_training()
-        except ImportError:
-            _handle_import_error("training.train")
+        # Construct the command to pass arguments to the training script.
+        train_command = [
+            "python3", "-m", "training.train",
+            "--config", args.config
+        ] + unknown
+        subprocess.run(train_command, check=True)
         print("--- Training completed successfully ---\n")
 
     print("Pipeline finished.")

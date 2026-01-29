@@ -115,6 +115,11 @@ class Trainer:
 
         # Sanity checks to ensure every parameter is in one of the sets
         param_dict = {pn: p for pn, p in self.model.named_parameters()}
+
+        # Filter out parameters that don't exist in the final param_dict (due to weight tying)
+        decay = decay & set(param_dict.keys())
+        no_decay = no_decay & set(param_dict.keys())
+
         inter_params = decay & no_decay
         union_params = decay | no_decay
         assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
