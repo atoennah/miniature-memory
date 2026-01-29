@@ -125,7 +125,7 @@ dmypy.json
 .pyre/
 
 # pytype static type analyzer
-.pytype/
+.type/
 
 # Cython debug symbols
 cython_debug/
@@ -136,3 +136,4 @@ cython_debug/
 /dataset/processed/
 /dataset/rejected/
 /training/checkpoints/
+out*/
