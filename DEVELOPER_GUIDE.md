@@ -35,7 +35,7 @@ Understanding the repository layout is key to contributing effectively.
 ├── CONTRIBUTING.md     # The locked, non-negotiable project intent
 ├── DEVELOPER_GUIDE.md  # This file
 ├── README.md           # High-level project overview
-└── ROADMAP.md          # Long-term project goals
+└── .jules/ROADMAP.md          # Long-term project goals
 ```
 
 ## 3. The Data Pipeline
