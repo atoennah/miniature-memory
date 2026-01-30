@@ -35,12 +35,16 @@ checkpointing, all driven by a configuration dictionary.
 import os
 import time
 import math
+import logging
 import torch
 import torch.nn as nn
 from typing import Dict, Any, Optional
 
 from .data_loader import DataManager
 from .model import GPT, GPTConfig
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class Trainer:
     """
@@ -64,7 +68,7 @@ class Trainer:
         self.config = config
         self.data_manager = data_manager
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        print(f"Using device: {self.device}")
+        logging.info(f"Using device: {self.device}")
 
         # Initialize model and optimizer
         self.model = self._build_model()
@@ -207,9 +211,9 @@ class Trainer:
         """
         max_steps = self.config['training']['max_steps']
         if lr is not None:
-            print(f"Step {step:4d}/{max_steps}: Loss: {loss.item():.4f}, LR: {lr:.6f}")
+            logging.info(f"Step {step:4d}/{max_steps}: Loss: {loss.item():.4f}, LR: {lr:.6f}")
         else:
-            print(f"Step {step:4d}/{max_steps}: Loss: {loss.item():.4f}")
+            logging.info(f"Step {step:4d}/{max_steps}: Loss: {loss.item():.4f}")
 
     def run(self) -> None:
         """
@@ -217,7 +221,7 @@ class Trainer:
         This method orchestrates the training process, including learning rate
         scheduling, executing training steps, and logging progress.
         """
-        print("\nStarting training...")
+        logging.info("Starting training...")
         start_time = time.time()
         max_steps = self.config['training']['max_steps']
         eval_interval = self.config['training']['eval_interval']
@@ -234,7 +238,7 @@ class Trainer:
 
         end_time = time.time()
         duration = end_time - start_time
-        print(f"Training finished in {duration:.2f} seconds.")
+        logging.info(f"Training finished in {duration:.2f} seconds.")
         self._save_checkpoint()
 
     def _save_checkpoint(self) -> None:
@@ -243,4 +247,4 @@ class Trainer:
         os.makedirs(output_dir, exist_ok=True)
         checkpoint_path = os.path.join(output_dir, 'model.pt')
         torch.save(self.model.state_dict(), checkpoint_path)
-        print(f"\nModel checkpoint saved to: {checkpoint_path}")
+        logging.info(f"Model checkpoint saved to: {checkpoint_path}")
