@@ -182,7 +182,34 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
-        # Causal self-attention using PyTorch's fused kernel
+        # [INJECTOR: THE POWER OF A FUSED KERNEL]
+        #
+        # The line below is the single most important performance optimization in this
+        # model. Instead of manually implementing the attention formula:
+        #   attn = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+        #   attn = F.softmax(attn, dim=-1)
+        #   y = attn @ v
+        # we delegate the entire operation to a single, highly-optimized "fused kernel"
+        # provided by PyTorch.
+        #
+        # Why is this so much faster?
+        # 1.  Reduced Memory IO: The manual implementation requires multiple separate
+        #     GPU operations. The intermediate results (the QK^T matrix, the softmax
+        #     output) must be written to and read from GPU memory. This IO is a major
+        #     bottleneck. A fused kernel computes the entire attention operation in one
+        #     go, without ever writing these large intermediate tensors to global memory.
+        #     This is the core insight behind optimizations like FlashAttention.
+        # 2.  Hardware-Specific Optimizations: PyTorch's fused kernel is written in
+        #     low-level CUDA and is heavily optimized to take advantage of the specific
+        #     architecture of the underlying GPU, maximizing parallelism and memory
+        #     throughput.
+        # 3.  Numerical Stability: These kernels often use more stable numerical
+        #     algorithms (like the online softmax) to prevent precision issues that
+        #     can arise with large dot products.
+        #
+        # By using this function, we leverage years of research in high-performance
+        # computing with a single line of code, resulting in a dramatic speedup and
+        # a significant reduction in memory usage.
         y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
 
         # Re-assemble all head outputs side by side
@@ -367,23 +394,61 @@ class GPT(nn.Module):
             logits, _ = self(idx_cond)
             logits = logits[:, -1, :] / temperature
 
-            # Top-p (nucleus) sampling
+            # [INJECTOR: DECODING THE NUCLEUS (TOP-P) SAMPLING ALGORITHM]
+            #
+            # Top-p sampling is a more sophisticated method for generating text than simple
+            # greedy decoding or temperature-based sampling. It aims to strike a balance
+            # between creativity and coherence by sampling from a smaller, more probable
+            # set of tokens. This set is called the "nucleus."
+            #
+            # The algorithm works as follows:
+            # 1.  Calculate the probability distribution for the next token using softmax.
+            # 2.  Sort the tokens by their probabilities in descending order.
+            # 3.  Calculate the cumulative sum of these sorted probabilities.
+            # 4.  Find the smallest set of tokens whose cumulative probability is greater
+            #     than or equal to the hyperparameter `p` (e.g., 0.9). This is the nucleus.
+            # 5.  "Prune" the distribution by setting the probability of all tokens *outside*
+            #     the nucleus to zero.
+            # 6.  Renormalize the probabilities of the nucleus tokens so they sum to 1.
+            # 7.  Sample the next token from this new, pruned distribution.
+            #
+            # This method avoids the pitfalls of other techniques:
+            # -   It's less repetitive than greedy decoding (which always picks the most
+            #     likely token).
+            # -   It's less likely to produce nonsensical or rare words than pure
+            #     temperature sampling, which can sometimes over-amplify the probability
+            #     of low-probability tokens.
+
+            # Step 1 & 2: Calculate probabilities and sort them.
             probs = F.softmax(logits, dim=-1)
             sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+
+            # Step 3: Calculate cumulative probabilities.
             cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
 
-            # Remove tokens with cumulative probability above the threshold
+            # Step 4: Find the tokens that form the nucleus.
+            # `sorted_indices_to_remove` will be a boolean tensor where `True` marks
+            # tokens that are *outside* the nucleus.
             sorted_indices_to_remove = cumulative_probs > top_p
-            # Shift the indices to the right to keep the first token above the threshold
+
+            # [INJECTOR NOTE: THE RIGHT-SHIFT TRICK]
+            # We need to ensure that we don't remove *all* tokens if the top token itself
+            # has a probability greater than `p`. This right-shift operation effectively
+            # includes the first token that crosses the `top_p` threshold in the nucleus,
+            # ensuring that the nucleus is never empty.
             sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
             sorted_indices_to_remove[..., 0] = 0
 
+            # Step 5: Prune the distribution.
+            # Get the original indices of the tokens to be removed.
             indices_to_remove = sorted_indices[sorted_indices_to_remove]
+            # Set the probabilities of these tokens to zero.
             probs[:, indices_to_remove] = 0
 
-            # Renormalize the probabilities
+            # Step 6: Renormalize the probabilities of the nucleus tokens.
             probs = probs / torch.sum(probs, dim=-1, keepdim=True)
 
+            # Step 7: Sample the next token from the pruned and renormalized distribution.
             idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, idx_next), dim=1)
 
