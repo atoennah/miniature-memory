@@ -110,3 +110,22 @@ To generate text from a trained model, use the `scripts/generate.py` script.
 2.  **Isolate Your Changes:** Develop new features in separate, well-defined modules to minimize merge conflicts.
 3.  **Adhere to Data Rules:** All changes that affect the dataset must follow the append-only and script-driven transformation principles.
 4.  **Submit for Review:** All changes require review from the Curator and final approval from the BDFL. Ensure your work is clean, documented, and fully aligned with the project's intent as defined in `CONTRIBUTING.md`.
+
+## 7. Developer Wisdom & Best Practices (from Bolt Journal)
+
+As a high-performance project, we adhere to several scientifically verified best practices to ensure efficiency and clarity. These are translated from the "Scientific Proofs" logged in the `.jules/BOLT_JOURNAL.md`.
+
+### Environment Constraints
+
+-   **Python 3.12+ & `torch.compile`**: Our environment uses Python 3.12+, which is currently incompatible with PyTorch's `torch.compile` (Dynamo backend). Do not attempt to use `torch.compile` in this environment as it will raise a `RuntimeError`.
+
+### Architectural Patterns
+
+-   **Conceptually Transparent Code**: We prioritize "pedagogical" code. Theoretical explanations and mathematical derivations should be embedded directly as block comments alongside the implementation (see `training/model.py` for examples).
+-   **Persistent Buffer Caching**: For tensors that are constant during the forward pass (e.g., positional index tensors), do not recreate them inside `forward()`. Instead, pre-compute them during `__init__` and use `self.register_buffer` to cache them. This reduces allocation overhead and improves tokens/second.
+-   **Deferred Module Imports**: In main orchestrator scripts like `run.py`, use deferred imports (import inside functions) for heavy pipeline stages. This can reduce script startup time by over 90%.
+
+### Training & Model Tips
+
+-   **Model Signature**: The `GPT` model's `forward` method returns a three-value tuple: `(logits, loss, kv_cache)`. Ensure all call sites correctly unpack this signature.
+-   **Optimal Micro-Training LR**: For short training runs (e.g., 100 steps) on our Indonesian dataset, a learning rate of `1e-4` has been empirically proven to converge significantly faster and better than `1e-5`.

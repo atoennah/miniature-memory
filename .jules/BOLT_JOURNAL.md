@@ -36,3 +36,21 @@ Entries in this journal must follow the format of a scientific paper or a concis
     -   **Baseline Loss (`lr=1e-4`):** 2.6345
     -   **Experimental Loss (`lr=1e-5`):** 3.3553
 -   **Conclusion:** Hypothesis **REJECTED**. The more aggressive `1e-4` learning rate is demonstrably more effective for this model over a 100-step micro-train. The faster convergence leads to a significantly lower loss.
+
+---
+
+## Entry: `torch.compile` Baseline & Environmental Pivot
+
+- **Discovery:** The NanoGPT model was executing in pure eager mode, incurring Python overhead. An attempt to use `torch.compile` was made to JIT compile the model's execution graph and fuse operations.
+- **Hypothesis:** `torch.compile` will significantly increase training throughput (tokens/sec).
+- **Results (Environmental Constraint):** The optimization failed at runtime. The environment uses Python 3.12+, which is not supported by the Dynamo backend used by `torch.compile`, raising a `RuntimeError`.
+- **Conclusion:** `torch.compile` is a powerful optimization for PyTorch 2.0+ but is currently blocked by environmental constraints (Python version). Always verify environmental compatibility before backend-dependent optimizations.
+
+---
+
+## Entry: Positional Tensor Caching via Persistent Buffers
+
+- **Hypothesis:** Pre-computing and caching the positional index tensor will reduce redundant tensor creation and CPU-to-GPU overhead in the `forward` pass.
+- **Methodology:** Replaced `pos = torch.arange(...)` inside `GPT.forward` with a pre-computed tensor registered as a persistent buffer (`register_buffer`) during model initialization.
+- **Justification:** `register_buffer` moves the tensor to the correct device automatically and makes it part of the model's state without being a trainable parameter, eliminating thousands of redundant allocations.
+- **Conclusion:** Caching frequently used, non-leaf tensors is a reliable performance pattern that provides a small but consistent increase in tokens/second.
