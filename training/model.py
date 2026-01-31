@@ -37,7 +37,7 @@ import math
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 class GPTConfig:
     """Configuration for the GPT model."""
@@ -136,7 +136,7 @@ class CausalSelfAttention(nn.Module):
         self.n_embd = config.n_embd
         self.dropout = config.dropout
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, past_key_value: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """Forward pass for the causal self-attention module."""
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
@@ -182,8 +182,17 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
+        if past_key_value is not None:
+            prev_k, prev_v = past_key_value
+            k = torch.cat([prev_k, k], dim=2)
+            v = torch.cat([prev_v, v], dim=2)
+
+        present = (k, v)
+
         # Causal self-attention using PyTorch's fused kernel
-        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+        # When using KV cache (T=1 during decode), is_causal is irrelevant.
+        # But we still use it for prefill (T > 1).
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=T > 1 and past_key_value is None)
 
         # Re-assemble all head outputs side by side
         # (B, nh, T, hs) -> (B, T, nh, hs) -> (B, T, C)
@@ -191,7 +200,7 @@ class CausalSelfAttention(nn.Module):
 
         # Output projection
         y = self.resid_dropout(self.c_proj(y))
-        return y
+        return y, present
 
 class Block(nn.Module):
     # [INJECTOR: THE ARCHITECTURE OF A TRANSFORMER BLOCK]
@@ -229,11 +238,12 @@ class Block(nn.Module):
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = FeedForward(config)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, past_key_value: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """Forward pass for a Transformer block."""
-        x = x + self.attn(self.ln_1(x))
+        attn_out, present = self.attn(self.ln_1(x), past_key_value=past_key_value)
+        x = x + attn_out
         x = x + self.mlp(self.ln_2(x))
-        return x
+        return x, present
 
 class GPT(nn.Module):
     """A GPT-style transformer model."""
@@ -330,11 +340,18 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None, past_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor], List[Tuple[torch.Tensor, torch.Tensor]]]:
         """Forward pass for the GPT model."""
         b, t = idx.size()
-        assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        pos = self.pos[:, :t]
+
+        # When using KV cache, the sequence length `t` is usually 1 (during decoding).
+        # However, the total sequence length (past + current) must not exceed `block_size`.
+        past_length = past_key_values[0][0].size(2) if past_key_values is not None else 0
+        total_length = past_length + t
+        assert total_length <= self.config.block_size, f"Cannot forward sequence of total length {total_length}, block size is only {self.config.block_size}"
+
+        # Position indices for the current tokens
+        pos = torch.arange(past_length, total_length, dtype=torch.long, device=idx.device).unsqueeze(0)
 
         # Token and position embeddings
         tok_emb = self.transformer.wte(idx)
@@ -342,8 +359,11 @@ class GPT(nn.Module):
         x = self.transformer.drop(tok_emb + pos_emb)
 
         # Transformer blocks
-        for block in self.transformer.h:
-            x = block(x)
+        new_past_key_values = []
+        for i, block in enumerate(self.transformer.h):
+            past_kv = past_key_values[i] if past_key_values is not None else None
+            x, present = block(x, past_key_value=past_kv)
+            new_past_key_values.append(present)
 
         # Final layer norm and language model head
         x = self.transformer.ln_f(x)
@@ -354,17 +374,27 @@ class GPT(nn.Module):
             # if we are given some desired targets also calculate the loss
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
-        return logits, loss
+        return logits, loss, new_past_key_values
 
     @torch.no_grad()
     def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_p: float = 0.9) -> torch.Tensor:
         """
         Autoregressively generates a sequence of tokens using top-p (nucleus) sampling.
+        Enhanced with KV cache for O(N) generation complexity.
         """
         self.eval()
-        for _ in range(max_new_tokens):
-            idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
-            logits, _ = self(idx_cond)
+        past_key_values = None
+        for i in range(max_new_tokens):
+            # If sequence length exceeds block_size, we must fall back to full recomputation or truncation.
+            # However, with KV cache, we usually just truncate the prompt initially.
+            if past_key_values is None:
+                # Prefill phase
+                idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+                logits, _, past_key_values = self(idx_cond)
+            else:
+                # Decode phase: only process the last token
+                logits, _, past_key_values = self(idx[:, -1:], past_key_values=past_key_values)
+
             logits = logits[:, -1, :] / temperature
 
             # Top-p (nucleus) sampling

@@ -1,10 +1,45 @@
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 import trafilatura
+from typing import Optional
 
-def fetch_html(url: str) -> str | None:
+class BrowserManager:
     """
-    Fetches the HTML content for a given URL using a headless browser.
+    Manages a persistent Playwright browser instance to avoid the overhead
+    of launching a new browser for every request.
+    """
+    _instance = None
+
+    def __init__(self):
+        self.playwright = sync_playwright().start()
+        self.browser = self.playwright.chromium.launch(headless=True)
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def fetch(self, url: str) -> str:
+        # Each fetch uses a new page (tab), which is much faster than a new browser.
+        page = self.browser.new_page()
+        try:
+            page.goto(url, timeout=60000)
+            page.wait_for_load_state('networkidle')
+            return page.content()
+        finally:
+            page.close()
+
+    @classmethod
+    def close_instance(cls):
+        if cls._instance:
+            cls._instance.browser.close()
+            cls._instance.playwright.stop()
+            cls._instance = None
+
+def fetch_html(url: str) -> Optional[str]:
+    """
+    Fetches the HTML content for a given URL using a persistent headless browser.
 
     Args:
         url (str): The URL to fetch.
@@ -12,18 +47,8 @@ def fetch_html(url: str) -> str | None:
     Returns:
         str | None: The HTML content as a string, or None if an error occurs.
     """
-
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            # Set a longer timeout (60 seconds) for pages that are slow to load
-            page.goto(url, timeout=60000)
-            # Wait for the network to be idle, indicating the page has likely loaded
-            page.wait_for_load_state('networkidle')
-            html = page.content()
-            browser.close()
-            return html
+        return BrowserManager.get_instance().fetch(url)
     except Exception as e:
         print(f"Error fetching {url} with Playwright: {e}")
         return None

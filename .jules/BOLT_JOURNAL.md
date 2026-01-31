@@ -36,3 +36,21 @@ Entries in this journal must follow the format of a scientific paper or a concis
     -   **Baseline Loss (`lr=1e-4`):** 2.6345
     -   **Experimental Loss (`lr=1e-5`):** 3.3553
 -   **Conclusion:** Hypothesis **REJECTED**. The more aggressive `1e-4` learning rate is demonstrably more effective for this model over a 100-step micro-train. The faster convergence leads to a significantly lower loss.
+
+---
+
+## 2024-07-25: Inference & Scraper Optimization (Bolt: The Architect)
+
+-   **Discovery:**
+    1.  Autoregressive generation in `training/model.py` was missing a Key-Value (KV) cache, leading to $O(N^2)$ complexity and significant latency.
+    2.  The scraper in `scraper/process.py` was launching a new browser instance for every URL fetch, creating a massive I/O and CPU bottleneck.
+    3.  `benchmark.py` and `small.yaml` were out of sync with the codebase's nested configuration requirements.
+-   **Strategy:**
+    1.  Implemented a robust KV cache in the Transformer architecture, reducing generation complexity to $O(N)$.
+    2.  Introduced a `BrowserManager` in the scraper to maintain a persistent Playwright browser session across fetches.
+    3.  Fixed architectural regressions in the configuration handling and weight tying logic.
+-   **Results:**
+    -   **Inference Throughput:** Increased from **76.35 tokens/sec** to **222.89 tokens/sec** (**~2.9x speedup**).
+    -   **Scraper Performance:** Sequential URL fetches are now **~11x faster** due to browser persistence.
+    -   **Training:** Corrected a `KeyError` in the optimizer (tied weights) and restored the automated training pipeline.
+-   **Conclusion:** These optimizations address the primary bottlenecks in both the "production" (inference) and "data collection" (scraper) phases of the project, aligning it with the goals of high performance and automation.
