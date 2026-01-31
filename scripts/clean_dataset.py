@@ -1,63 +1,24 @@
 import os
-import re
 import argparse
+import sys
 
-# Define cleaning constants
-# Whitelist of characters: allows letters, numbers, basic punctuation, and whitespace.
-ALLOWED_CHARS = re.compile(r'[^a-zA-Z0-9\s.,?!\'"()-]')
-REPEATED_WHITESPACE = re.compile(r'[ \t]+')
-REPEATED_NEWLINES = re.compile(r'\n{3,}')
+# Add project root to the Python path to allow importing from the processing package
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Blacklist for common Indonesian gambling ad keywords.
-# These are case-insensitive.
-GAMBLING_AD_KEYWORDS = [
-    "slot gacor", "judi online", "daftar segera", "bonus new member",
-    "zeus", "pragmatic play", "agen bola", "togel"
-]
+from processing.pipeline import CleaningPipeline
 
-def clean_content(content):
+def run_cleaning(raw_dir: str, cleaned_dir: str):
     """
-    Cleans the text content by removing non-allowed characters, normalizing
-    whitespace, and filtering out paragraphs containing blacklisted keywords.
+    Walks the raw data directory, cleans files using the modular CleaningPipeline,
+    and saves them to the cleaned directory.
 
     Args:
-        content (str): The raw text content.
-
-    Returns:
-        str: The cleaned text content, or an empty string if all content is filtered.
+        raw_dir: Source directory with raw .txt files.
+        cleaned_dir: Destination directory for cleaned .txt files.
     """
-    # --- "Slot Gacor" Filter ---
-    # Split the content into paragraphs and filter out those containing ads.
-    paragraphs = content.split('\n')
-    cleaned_paragraphs = []
-    for p in paragraphs:
-        # Check if any blacklisted keyword appears in the paragraph (case-insensitive)
-        if not any(keyword in p.lower() for keyword in GAMBLING_AD_KEYWORDS):
-            cleaned_paragraphs.append(p)
+    print(f"Starting modular cleaning process from '{raw_dir}' to '{cleaned_dir}'...\n")
 
-    # Re-join the content after filtering
-    content = "\n".join(cleaned_paragraphs)
-
-    # --- Standard Cleaning ---
-    # Remove any characters not in our whitelist
-    cleaned = ALLOWED_CHARS.sub('', content)
-
-    # Normalize whitespace: replace tabs and multiple spaces with a single space
-    cleaned = REPEATED_WHITESPACE.sub(' ', cleaned)
-
-    # Reduce sequences of 3 or more newlines to 2
-    cleaned = REPEATED_NEWLINES.sub('\n\n', cleaned)
-
-    # Strip leading/trailing whitespace from the whole text
-    cleaned = cleaned.strip()
-
-    return cleaned
-
-def run_cleaning(raw_dir, cleaned_dir):
-    """
-    Walks the raw data directory, cleans files, and saves them to the cleaned directory.
-    """
-    print(f"Starting cleaning process from '{raw_dir}' to '{cleaned_dir}'...\n")
+    pipeline = CleaningPipeline()
     cleaned_count = 0
     skipped_count = 0
 
@@ -75,7 +36,7 @@ def run_cleaning(raw_dir, cleaned_dir):
                     with open(raw_filepath, 'r', encoding='utf-8', errors='ignore') as f:
                         raw_content = f.read()
 
-                    cleaned_content = clean_content(raw_content)
+                    cleaned_content = pipeline.clean(raw_content)
 
                     if cleaned_content:
                         with open(cleaned_filepath, 'w', encoding='utf-8') as f:
@@ -83,7 +44,7 @@ def run_cleaning(raw_dir, cleaned_dir):
                         print(f"[✅ CLEANED] {relative_path}")
                         cleaned_count += 1
                     else:
-                        print(f"[⚠️ SKIPPED] {relative_path} (empty after cleaning)")
+                        print(f"[⚠️ SKIPPED] {relative_path} (failed quality/cleaning checks)")
                         skipped_count += 1
 
                 except Exception as e:
@@ -96,7 +57,7 @@ def run_cleaning(raw_dir, cleaned_dir):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Clean raw text files and save them to a new directory."
+        description="Clean raw text files using a modular pipeline and save them."
     )
     parser.add_argument(
         "--raw_dir",

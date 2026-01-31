@@ -1,61 +1,23 @@
 import os
 import argparse
+import sys
 
-# Define validation constants
-MIN_FILE_LENGTH = 50  # Minimum number of characters
-MIN_PRINTABLE_RATIO = 0.85 # Minimum ratio of printable characters
+# Add project root to the Python path to allow importing from the processing package
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# --- Language Guard ---
-# A file is considered Indonesian only if it contains a sufficient number
-# of common Indonesian stop-words.
-INDONESIAN_STOP_WORDS = {
-    "yang", "dan", "aku", "dia", "dengan", "tidak", "ini", "itu", "ke", "di"
-}
-MIN_STOP_WORD_COUNT = 5
+from processing.quality_filter import QualityFilter
 
-def is_printable(char):
-    """Checks if a character is printable, including common whitespace."""
-    return char.isprintable() or char in ('\n', '\r', '\t')
-
-def validate_file(filepath):
+def run_validation(raw_data_dir: str):
     """
-    Validates a single raw text file based on length and content.
+    Walks through the raw data directory and validates each text file
+    using the modular QualityFilter.
 
     Args:
-        filepath (str): The path to the text file.
-
-    Returns:
-        tuple: A tuple containing a boolean (True if valid) and a message.
+        raw_data_dir: Source directory with raw .txt files.
     """
-    try:
-        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read()
+    print(f"Starting modular validation in '{raw_data_dir}'...\n")
 
-        if len(content) < MIN_FILE_LENGTH:
-            return False, f"Too short ({len(content)} chars)"
-
-        printable_chars = sum(1 for char in content if is_printable(char))
-        printable_ratio = printable_chars / len(content) if len(content) > 0 else 0
-
-        if printable_ratio < MIN_PRINTABLE_RATIO:
-            return False, f"Low printable ratio ({printable_ratio:.2f})"
-
-        # --- Language Guard Check ---
-        words = set(content.lower().split())
-        stop_word_matches = words.intersection(INDONESIAN_STOP_WORDS)
-        if len(stop_word_matches) < MIN_STOP_WORD_COUNT:
-            return False, f"Failed language check (found {len(stop_word_matches)} Indonesian stop-words)"
-
-        return True, "Valid"
-
-    except Exception as e:
-        return False, f"Error reading file: {e}"
-
-def run_validation(raw_data_dir):
-    """
-    Walks through the raw data directory and validates each text file.
-    """
-    print(f"Starting validation in '{raw_data_dir}'...\n")
+    q_filter = QualityFilter()
     validated_count = 0
     failed_count = 0
 
@@ -63,7 +25,14 @@ def run_validation(raw_data_dir):
         for filename in files:
             if filename.endswith(".txt"):
                 filepath = os.path.join(root, filename)
-                is_valid, message = validate_file(filepath)
+
+                try:
+                    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
+
+                    is_valid, message = q_filter.validate_content(content)
+                except Exception as e:
+                    is_valid, message = False, str(e)
 
                 if is_valid:
                     status = "✅ PASSED"
@@ -81,7 +50,7 @@ def run_validation(raw_data_dir):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Validate raw text files in the dataset."
+        description="Validate raw text files in the dataset using modular QualityFilter."
     )
     parser.add_argument(
         "--raw_data_dir",
