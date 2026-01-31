@@ -1,33 +1,26 @@
 # [INJECTOR: THE PHILOSOPHY OF A FROM-SCRATCH GPT]
 #
-# This file is the pedagogical core of a from-scratch GPT implementation. Its purpose
-# is not just to be functional, but to be exceptionally clear and educational. We build
-# every core component of the Transformer architecture (as described in "Attention Is All
-# You Need") from basic PyTorch primitives.
+# This module represents the pedagogical apex of the `miniature-memory` architecture.
+# We do not merely implement a Transformer; we document the evolution of its logic.
+# Based on the seminal work "Attention Is All You Need" (Vaswani et al., 2017), this
+# implementation builds the GPT (Generative Pre-trained Transformer) from first
+# principles using PyTorch primitives.
 #
 # The hierarchy of the model is as follows:
-# 1.  GPT (The full model)
-#       - Manages token and positional embeddings.
-#       - Contains a stack of Transformer Blocks.
-#       - Ends with a layer normalization and a linear layer to produce logits.
+# 1.  GPT (The Logos): Orchestrates embeddings, the transformer stack, and the LM head.
+# 2.  Block (The Layer): Encapsulates Causal Self-Attention and the Feed-Forward MLP.
+# 3.  CausalSelfAttention (The Communication): Manages token-to-token resonance via
+#     Scaled Dot-Product Attention and KV-Caching.
+# 4.  MLP (The Computation): Performs per-token non-linear transformations via GELU.
 #
-# 2.  Block (A single Transformer layer)
-#       - Encapsulates one Multi-Head Causal Self-Attention module and one MLP.
-#       - Employs residual connections ("shortcuts") around both sub-modules, which is
-#         critical for training very deep networks.
+# Every design choice here prioritizes conceptual clarity over hyper-optimization,
+# ensuring that the "Black Box" of Deep Learning is made transparent for any engineer
+# seeking to understand the mathematical and structural reality of modern LLMs.
 #
-# 3.  CausalSelfAttention (The heart of the Transformer)
-#       - Implements Multi-Head Scaled Dot-Product Attention.
-#       - A causal mask is applied to ensure that the model is autoregressive (i.e.,
-#         predictions for a given token can only depend on previous tokens).
-#
-# 4.  MLP (Feed-Forward Network)
-#       - A simple two-layer feed-forward network with a GELU activation function.
-#       - This component is responsible for much of the "thinking" or feature extraction
-#         in each Transformer block.
-#
-# Every design choice here prioritizes clarity over optimization, making it an ideal
-# resource for studying the internal mechanics of a language model.
+# References:
+# - Attention Is All You Need: https://arxiv.org/abs/1706.03762
+# - GPT-2 Architecture: https://openai.com/research/better-language-models
+# - NanoGPT (Pedagogical Baseline): https://github.com/karpathy/nanogpt
 
 """
 A minimal, from-scratch GPT model implementation.
@@ -136,7 +129,7 @@ class CausalSelfAttention(nn.Module):
         self.n_embd = config.n_embd
         self.dropout = config.dropout
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, past_key_values: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """Forward pass for the causal self-attention module."""
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
@@ -182,8 +175,35 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
+        # [INJECTOR: THE MECHANICS OF KV-CACHING]
+        #
+        # Autoregressive generation is fundamentally O(N^2) because we re-compute the
+        # entire sequence history for every new token. KV-Caching transforms this into
+        # an O(N) operation by storing and reusing the computed Key (K) and Value (V)
+        # tensors from previous steps.
+        #
+        # During the "prefill" phase (first step), we compute K and V for the entire
+        # prompt. In the "decode" phase (subsequent steps), we only compute K and V for
+        # the single new token and concatenate them with the cached history.
+        #
+        # Why not cache Q (Query)?
+        # The Query is unique to the *current* token being processed. We need the new
+        # Query to "ask" all the previous Keys for their information. The Keys and
+        # Values, however, represent the fixed history of the sequence and do not change.
+        if past_key_values is not None:
+            pk, pv = past_key_values
+            k = torch.cat((pk, k), dim=2)
+            v = torch.cat((pv, v), dim=2)
+
+        present = (k, v)
+
         # Causal self-attention using PyTorch's fused kernel
-        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+        # [INJECTOR: CAUSALITY IN GENERATION]
+        # When generating (T=1), we don't need the causal mask because the token
+        # can only see its own past (which is in the cache). However, the fused
+        # kernel `scaled_dot_product_attention` with `is_causal=True` handles this
+        # correctly even if T=1, as long as we don't provide a mask that conflicts.
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=(T > 1))
 
         # Re-assemble all head outputs side by side
         # (B, nh, T, hs) -> (B, T, nh, hs) -> (B, T, C)
@@ -191,7 +211,7 @@ class CausalSelfAttention(nn.Module):
 
         # Output projection
         y = self.resid_dropout(self.c_proj(y))
-        return y
+        return y, present
 
 class Block(nn.Module):
     # [INJECTOR: THE ARCHITECTURE OF A TRANSFORMER BLOCK]
@@ -229,11 +249,12 @@ class Block(nn.Module):
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = FeedForward(config)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, past_key_values: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """Forward pass for a Transformer block."""
-        x = x + self.attn(self.ln_1(x))
+        attn_out, present = self.attn(self.ln_1(x), past_key_values)
+        x = x + attn_out
         x = x + self.mlp(self.ln_2(x))
-        return x
+        return x, present
 
 class GPT(nn.Module):
     """A GPT-style transformer model."""
@@ -330,11 +351,17 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None, past_key_values: Optional[Tuple[Tuple[torch.Tensor, torch.Tensor], ...]] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor], Tuple[Tuple[torch.Tensor, torch.Tensor], ...]]:
         """Forward pass for the GPT model."""
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        pos = self.pos[:, :t]
+
+        # [INJECTOR: POSITIONAL OFFSET IN KV-CACHING]
+        # When using a KV-cache, the current tokens being processed are at an offset
+        # equal to the number of tokens already in the cache. We must ensure the
+        # positional embeddings match the actual absolute position in the sequence.
+        past_length = past_key_values[0][0].size(2) if past_key_values is not None else 0
+        pos = self.pos[:, past_length:past_length+t]
 
         # Token and position embeddings
         tok_emb = self.transformer.wte(idx)
@@ -342,8 +369,11 @@ class GPT(nn.Module):
         x = self.transformer.drop(tok_emb + pos_emb)
 
         # Transformer blocks
-        for block in self.transformer.h:
-            x = block(x)
+        new_presents = []
+        for i, block in enumerate(self.transformer.h):
+            past_kv = past_key_values[i] if past_key_values is not None else None
+            x, present = block(x, past_kv)
+            new_presents.append(present)
 
         # Final layer norm and language model head
         x = self.transformer.ln_f(x)
@@ -354,17 +384,28 @@ class GPT(nn.Module):
             # if we are given some desired targets also calculate the loss
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
-        return logits, loss
+        return logits, loss, tuple(new_presents)
 
     @torch.no_grad()
     def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_p: float = 0.9) -> torch.Tensor:
         """
         Autoregressively generates a sequence of tokens using top-p (nucleus) sampling.
+        Optimized with KV-caching.
         """
         self.eval()
-        for _ in range(max_new_tokens):
-            idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
-            logits, _ = self(idx_cond)
+        presents = None
+        for i in range(max_new_tokens):
+            # [INJECTOR: UNIFIED PREFILL & DECODE]
+            # On the first iteration (i=0), we perform the "prefill" pass, processing
+            # the entire prompt and initializing the KV-cache.
+            # In subsequent iterations (i>0), we only process the *last* token generated,
+            # using the KV-cache to avoid redundant computations.
+            if i == 0:
+                idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+            else:
+                idx_cond = idx[:, -1:]
+
+            logits, _, presents = self(idx_cond, past_key_values=presents)
             logits = logits[:, -1, :] / temperature
 
             # Top-p (nucleus) sampling

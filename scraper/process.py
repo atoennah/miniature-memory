@@ -1,3 +1,27 @@
+# [INJECTOR: THE ARCHITECTURE OF STEALTH CRAWLING]
+#
+# Web scraping in the modern era is no longer a simple matter of fetching HTML.
+# Sites increasingly use sophisticated bot-detection mechanisms, including:
+# 1.  User-Agent Analysis: Checking if the browser identifies as a known bot.
+# 2.  JavaScript Execution: Verifying that the client can execute complex JS, which
+#     simple `requests` or `urllib` calls cannot do.
+# 3.  TLS Fingerprinting: Analyzing the handshake to see if it matches a real browser.
+# 4.  Behavioral Analysis: Monitoring the timing and sequence of requests.
+#
+# To counter this, we use Playwright, a powerful browser automation library. It
+# launches a real, headless Chromium instance, allowing us to:
+# -   Execute all JavaScript, ensuring lazy-loaded content is captured.
+# -   Mimic real browser headers and behavior.
+# -   Handle `networkidle` states to wait for asynchronous content to load.
+#
+# This module serves as the primary gateway for high-fidelity content extraction,
+# transforming a hostile web into a structured dataset for LLM training.
+#
+# References:
+# - Playwright Documentation: https://playwright.dev/python/docs/intro
+# - Trafilatura Documentation: https://trafilatura.readthedocs.io/
+# - TLS Fingerprinting Explained: https://browserleaks.com/tls
+
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 import trafilatura
@@ -31,8 +55,16 @@ def fetch_html(url: str) -> str | None:
 def extract_text(html: str) -> str:
     """
     Extracts the main story text from HTML using trafilatura.
-    This is much more effective at removing boilerplate than a simple
-    paragraph-tag search.
+    # [INJECTOR: CONTENT VS BOILERPLATE]
+    #
+    # A major challenge in web scraping is "Signal-to-Noise" ratio. A typical
+    # webpage consists of 80% boilerplate (menus, ads, sidebars, footers) and
+    # only 20% actual content.
+    #
+    # We use `trafilatura`, which employs sophisticated heuristics based on
+    # HTML structure, text density, and tag analysis to identify the "main"
+    # content block. This is far more robust than manually selecting CSS
+    # selectors, which vary wildly between sites.
 
     Args:
         html (str): The HTML content of the page.

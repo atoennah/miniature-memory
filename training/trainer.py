@@ -86,10 +86,28 @@ class Trainer:
     def _build_optimizer(self) -> torch.optim.Optimizer:
         """
         Builds the AdamW optimizer with a sophisticated weight decay strategy.
-        This method separates model parameters into two groups: those that will
-        experience weight decay and those that will not. Typically, biases,
-        LayerNorm weights, and Embedding weights are not weight-decayed.
-        This helps prevent overfitting without harming model performance.
+        # [INJECTOR: THE WISDOM OF SELECTIVE WEIGHT DECAY]
+        # Reference: Decoupled Weight Decay Regularization (Loshchilov & Hutter, 2017)
+        # https://arxiv.org/abs/1711.05101
+        #
+        # Weight decay (L2 regularization) is a technique to prevent overfitting by
+        # penalizing large weights. However, applying it blindly to all parameters
+        # can be counter-productive.
+        #
+        # 1.  Linear Weights: Decayed. These are the primary "features" and we want
+        #     them to be as simple as possible to generalize well.
+        # 2.  Biases: Not decayed. Biases shift the activation function and don't
+        #     contribute to the complexity of the feature mapping in the same way
+        #     as weights.
+        # 3.  LayerNorm/Embedding: Not decayed. These parameters act as "anchors"
+        #     for the data distribution (LayerNorm) or map discrete indices to
+        #     continuous space (Embedding). Decaying them can destabilize the
+        #     model's internal calibration.
+        #
+        # This method separates model parameters into two groups: those that will
+        # experience weight decay and those that will not. Typically, biases,
+        # LayerNorm weights, and Embedding weights are not weight-decayed.
+        # This helps prevent overfitting without harming model performance.
         Returns:
             torch.optim.Optimizer: The configured AdamW optimizer.
         """
@@ -136,7 +154,21 @@ class Trainer:
         """
         Calculates the learning rate for a given iteration using a cosine decay
         schedule with a linear warmup.
-        Args:
+        # [INJECTOR: THE GEOMETRY OF LEARNING RATES]
+        # Reference: SGDR: Stochastic Gradient Descent with Warm Restarts (Loshchilov & Hutter, 2016)
+        # https://arxiv.org/abs/1608.03983
+        #
+        # A static learning rate is rarely optimal. We use a Cosine Decay with Warmup:
+        #
+        # 1.  Linear Warmup: Gradually increases the LR from 0 to `max_lr`. This
+        #     prevents the model from "exploding" early in training when gradients
+        #     are noisy and weights are randomly initialized.
+        # 2.  Cosine Decay: Follows the curve of a cosine function down to `min_lr`.
+        #     This allows for large steps in the beginning (exploration) and
+        #     progressively smaller steps at the end (fine-tuning/exploitation),
+        #     which is empirically shown to produce better local minima.
+        #
+        # Args:
             it (int): The current training iteration.
         Returns:
             float: The calculated learning rate.
@@ -183,7 +215,11 @@ class Trainer:
         xb, yb = self.data_manager.get_batch()
 
         with torch.amp.autocast(device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')):
-            _, loss = self.model(xb, yb)
+            # [INJECTOR: UNPACKING THE TRINITY]
+            # The model now returns (logits, loss, presents). During training, we
+            # ignore the `presents` (KV-cache) as we are processing full sequences
+            # and don't need to store state between steps.
+            _, loss, _ = self.model(xb, yb)
 
         self.optimizer.zero_grad(set_to_none=True)
         scaler.scale(loss).backward()
