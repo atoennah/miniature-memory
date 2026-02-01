@@ -23,6 +23,9 @@ Understanding the repository layout is key to contributing effectively.
 ```
 .
 ├── .jules/             # Agent-specific instructions and memory
+│   ├── AGENTS.md       # Governance model and collaboration rules
+│   ├── BOLT_JOURNAL.md # Technical decisions and benchmarks
+│   └── ROADMAP.md      # Long-term project goals
 ├── dataset/
 │   ├── raw/            # Append-only, immutable raw text files
 │   ├── cleaned/        # Script-generated cleaned text
@@ -33,9 +36,9 @@ Understanding the repository layout is key to contributing effectively.
 ├── training/           # Model definition, training loop, and configs
 ├── .gitignore          # Specifies intentionally untracked files
 ├── CONTRIBUTING.md     # The locked, non-negotiable project intent
+├── DATA_FORMAT.md      # Training data specifications
 ├── DEVELOPER_GUIDE.md  # This file
-├── README.md           # High-level project overview
-└── ROADMAP.md          # Long-term project goals
+└── README.md           # High-level project overview
 ```
 
 ## 3. The Data Pipeline
@@ -105,6 +108,8 @@ To generate text from a trained model, use the `scripts/generate.py` script.
 -   **Function:** Loads the latest checkpoint and generates a sample of the specified length.
 
 ## 6. Contribution Workflow
+
+For a detailed breakdown of our agent governance model and collaboration rules, see **[.jules/AGENTS.md](.jules/AGENTS.md)**.
 
 1.  **Sync with `main`:** Always ensure your local branch is up-to-date with the latest `main` before starting work.
 2.  **Isolate Your Changes:** Develop new features in separate, well-defined modules to minimize merge conflicts.
