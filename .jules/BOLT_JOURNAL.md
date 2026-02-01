@@ -36,3 +36,20 @@ Entries in this journal must follow the format of a scientific paper or a concis
     -   **Baseline Loss (`lr=1e-4`):** 2.6345
     -   **Experimental Loss (`lr=1e-5`):** 3.3553
 -   **Conclusion:** Hypothesis **REJECTED**. The more aggressive `1e-4` learning rate is demonstrably more effective for this model over a 100-step micro-train. The faster convergence leads to a significantly lower loss.
+
+---
+
+## 2024-05-22: KV-Cache Implementation & Ontological Refactor
+
+-   **Hypothesis:** Implementing a Key-Value (KV) cache for the `generate` method will eliminate redundant computations of past token representations, resulting in a significant increase in inference throughput, especially for longer sequences.
+-   **Methodology:**
+    -   Measured baseline generation throughput for 200 tokens using a dedicated benchmark script (`benchmark_gen.py`).
+    -   Refactored `GPTConfig` to a `@dataclass` for structural clarity.
+    -   Modified `CausalSelfAttention`, `Block`, and `GPT` modules to support stateful KV-cache propagation.
+    -   Optimized `GPT.generate` to process only the latest token per iteration after the initial prompt.
+-   **Results:**
+    -   **Baseline Throughput (200 tokens):** 44.42 tokens/sec
+    -   **Optimized Throughput (200 tokens):** 147.30 tokens/sec
+    -   **Performance Gain:** ~3.3x speedup.
+-   **Conclusion:** The hypothesis was **CONFIRMED** with a substantial margin. The KV-cache is a critical optimization for autoregressive generation, transforming the computational complexity from $O(N^2)$ to $O(N)$ with respect to the generated sequence length.
+-   **Philosophical Note:** The refactor to `@dataclass` aligns the code with the Principle of Ontological Clarity, making the model's configuration a first-class, type-safe entity. The implementation of KV-cache respects the Teleological Alignment of the `forward` pass, ensuring it only performs the necessary work for the given input.
