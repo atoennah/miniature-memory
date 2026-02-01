@@ -1,3 +1,21 @@
+# [INJECTOR: THE LOGOS OF HEURISTICS]
+#
+# In the vast, unstructured landscape of the web, finding specific content (like
+# stories) without a formal API requires "Heuristic Discovery." This is the art of
+# using probabilistic rules to identify targets with high precision.
+#
+# Why Heuristics?
+# 1.  Diversity of Structure: Every site has a different DOM. We cannot write a
+#     parser for every site.
+#   2.  Noise Reduction: Modern webs are 90% ads, navbars, and legal fluff.
+#   3.  Efficiency: By filtering URLs at the discovery phase, we avoid the massive
+#     overhead of fetching and processing non-target HTML pages.
+#
+# Key Heuristics Used Here:
+# -   URL Path Filtering: Rejecting known administrative paths (e.g., /login, /tag).
+# -   Text Density: Story titles generally fall into a specific word-count window.
+# -   Negative Keywords: Explicitly rejecting common UI elements (e.g., "Home").
+
 from playwright.sync_api import Page
 from urllib.parse import urljoin
 from typing import List, Set
@@ -19,7 +37,10 @@ def find_story_urls_heuristically(page: Page, index_url: str) -> List[str]:
     """
     print(f"Heuristically analyzing links on: {index_url}")
 
-    # Scroll to the bottom of the page to trigger any lazy-loading scripts
+    # [INJECTOR NOTE: TRIGGERING DYNAMIC CONTENT]
+    # Modern sites often use "Infinite Scroll" or "Lazy Loading." If we only fetch the
+    # initial HTML, we miss 80% of the content. We scroll to the bottom to trigger the
+    # XHR/Fetch requests that populate the DOM with more story links.
     page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
     page.wait_for_timeout(3000)  # Wait for content to potentially load
 

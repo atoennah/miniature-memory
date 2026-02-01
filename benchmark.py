@@ -1,4 +1,19 @@
 
+# [INJECTOR: THE PHILOSOPHY OF EMPIRICAL PERFORMANCE]
+#
+# In the domain of Deep Learning, theoretical complexity ($O(n)$) often diverges
+# from empirical performance due to hardware constraints (memory bandwidth,
+# cache locality, SIMD utilization).
+#
+# This benchmark serves as our "Source of Truth." It measures:
+# 1. Throughput (Tokens/Sec): The primary metric of computational efficiency.
+# 2. Latency: The time required for a single forward pass.
+#
+# Why Benchmark with Dummy Data?
+# By using synthetic tensors, we isolate the model's computational performance
+# from the overhead of Disk I/O or Data Preprocessing. This gives us a "clean"
+# measurement of the Transformer's execution speed.
+
 import time
 import torch
 import yaml
@@ -15,21 +30,28 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     # Use a dummy vocab_size for benchmark purposes
     vocab_size = 512
 
+    # [INJECTOR NOTE: CONFIGURATION SCHEMA ALIGNMENT]
+    # The configuration YAML follows a nested schema (model, training, etc.).
+    # We must index into the appropriate sub-dictionaries to retrieve the
+    # hyperparameters correctly.
+    model_config = config_data['model']
+    training_config = config_data['training']
+
     config = GPTConfig(
         vocab_size=vocab_size,
-        block_size=config_data['block_size'],
-        n_layer=config_data['n_layer'],
-        n_head=config_data['n_head'],
-        n_embd=config_data['n_embd'],
-        dropout=config_data['dropout']
+        block_size=model_config['block_size'],
+        n_layer=model_config['n_layer'],
+        n_head=model_config['n_head'],
+        n_embd=model_config['n_embd'],
+        dropout=model_config['dropout']
     )
 
     model = GPT(config)
     model.eval() # Set to eval mode to disable dropout for benchmark
 
     # Generate dummy data
-    batch_size = config_data['batch_size']
-    block_size = config_data['block_size']
+    batch_size = training_config['batch_size']
+    block_size = model_config['block_size']
     dummy_input = torch.randint(0, vocab_size, (batch_size, block_size))
     dummy_target = torch.randint(0, vocab_size, (batch_size, block_size))
 

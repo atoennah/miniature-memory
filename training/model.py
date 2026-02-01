@@ -182,7 +182,25 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
-        # Causal self-attention using PyTorch's fused kernel
+        # [INJECTOR: THE FUSED KERNEL - THE ENGINE OF PERFORMANCE]
+        #
+        # Here we invoke `F.scaled_dot_product_attention`. This is not just a function;
+        # it is a portal to highly optimized, hardware-specific kernels (such as
+        # FlashAttention or Memory-Efficient Attention).
+        #
+        # Why use a fused kernel instead of manual implementation?
+        # 1.  Memory Efficiency: Standard attention requires O(T^2) memory to store the
+        #     intermediate attention matrix. Fused kernels use tiling and recomputation
+        #     to reduce this to O(T), allowing for much longer context lengths.
+        # 2.  Throughput: By fusing the dot product, scaling, masking, and softmax into
+        #     a single GPU/CPU kernel, we avoid multiple round-trips to global memory.
+        #     This dramatically increases the compute-to-memory-bandwidth ratio.
+        # 3.  Numerical Stability: These kernels often include specialized handling
+        #     for high-precision intermediate calculations, preventing overflow during
+        #     the exponential operations in softmax.
+        #
+        # Note: The `is_causal=True` flag automatically applies the lower-triangular
+        # mask, ensuring that token i can only attend to tokens j <= i.
         y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
 
         # Re-assemble all head outputs side by side
@@ -236,6 +254,23 @@ class Block(nn.Module):
         return x
 
 class GPT(nn.Module):
+    # [INJECTOR: THE GLOBAL ONTOLOGY OF GPT]
+    #
+    # The GPT architecture is a decoder-only transformer. Its mission is simple but
+    # profound: to learn the conditional probability distribution P(x_t | x_{<t})
+    # over a sequence of tokens.
+    #
+    # Scaling Laws (The "Compute-Optimal" Path):
+    # As we scale this model (from 'small' to '10B+'), the relationship between
+    # parameters (N), data (D), and compute (C) becomes governed by power laws.
+    #
+    # TODO [SCALING]: When migrating to multi-GPU clusters, we must implement:
+    # 1. Pipeline Parallelism (splitting layers across GPUs).
+    # 2. Tensor Parallelism (splitting individual linear layers).
+    # 3. ZeRO Redundancy Optimizer (partitioning optimizer states).
+    #
+    # Current Bottleneck: This implementation is strictly single-device and
+    # CPU-bound in the current environment.
     """A GPT-style transformer model."""
     def __init__(self, config: GPTConfig):
         super().__init__()
@@ -320,6 +355,10 @@ class GPT(nn.Module):
         # function provided by the skip connections.
         for pn, p in self.named_parameters():
             if pn.endswith('c_proj.weight'):
+                # [INJECTOR NOTE]: This 1/sqrt(2*N) factor is critical. It accounts for
+                # the fact that each block adds variance to the residual stream. By
+                # scaling down the initialization of the residual branch, we keep the
+                # variance of the residual stream stable at 1.0 even as depth increases.
                 torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
 
     def _init_weights(self, module):

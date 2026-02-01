@@ -1,3 +1,22 @@
+# [INJECTOR: THE STEALTH STRATEGY OF DYNAMIC FETCHING]
+#
+# Static HTML fetching (via `requests` or `curl`) is increasingly obsolete.
+# Modern web servers use sophisticated Anti-Bot measures and client-side
+# rendering (React/Vue/Next.js).
+#
+# Why Playwright?
+# 1.  JavaScript Execution: We need a full browser engine to execute the scripts
+#     that actually render the text.
+# 2.  Behavioral Mimicry: By using a real browser, we produce a more "human"
+#     fingerprint (TLS JA3, HTTP/2 frames, window properties).
+# 3.  Event Synchronization: `wait_for_load_state('networkidle')` ensures we
+#     capture the page only after all async content has arrived.
+#
+# Trafilatura: The "Signal from Noise" Filter
+# Extracting text from a raw DOM is notoriously difficult. Trafilatura uses
+# structural and linguistic analysis to identify the "Main Content" and strip
+# away ads, sidebars, and trackers. It is our primary defense against "Data Pollution."
+
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 import trafilatura
@@ -13,6 +32,8 @@ def fetch_html(url: str) -> str | None:
         str | None: The HTML content as a string, or None if an error occurs.
     """
 
+    # TODO [BOT-STEALTH]: To prevent IP-based blocking, we must integrate a
+    # residential proxy rotator and randomize the User-Agent / Viewport.
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)

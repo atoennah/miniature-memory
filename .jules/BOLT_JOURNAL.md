@@ -15,6 +15,14 @@ Entries in this journal must follow the format of a scientific paper or a concis
 
 ---
 
+## 2024-07-25: "Stealth & Logos" Injection for Scraper
+
+-   **Discovery:** The scraper modules were functional "black boxes." The logic for heuristics and dynamic fetching was implicit, making maintenance and debugging difficult for newcomers.
+-   **Strategy:** Injected "The Logos of Heuristics" into `crawler.py` and "The Stealth Strategy" into `process.py`. Explained the use of text density for discovery and Playwright for behavioral mimicry.
+-   **Conclusion:** The scraper's strategic intent is now visible, transforming it from a mere tool into a documented strategy.
+
+---
+
 ## 2024-05-21: Deferred Imports in `run.py`
 
 -   **Hypothesis:** Deferring the import of pipeline modules in `run.py` until they are explicitly needed will significantly reduce the script's startup time and memory footprint.
