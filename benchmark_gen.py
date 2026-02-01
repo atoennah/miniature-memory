@@ -1,0 +1,58 @@
+
+import time
+import torch
+import yaml
+from training.model import GPT, GPTConfig
+
+def run_gen_benchmark(config_path='training/configs/benchmark.yaml'):
+    """
+    Benchmarks the generation throughput of the GPT model.
+    """
+    with open(config_path, 'r') as f:
+        config_data = yaml.safe_load(f)
+
+    # Use the actual vocab size from the dataset if possible, else fallback
+    try:
+        from training.data_loader import DataManager
+        dm = DataManager(config_data['data']['path'], config_data['model']['block_size'], 1, 'cpu')
+        vocab_size = dm.vocab_size
+    except:
+        vocab_size = 512
+
+    config = GPTConfig(
+        vocab_size=vocab_size,
+        block_size=config_data['model']['block_size'],
+        n_layer=config_data['model']['n_layer'],
+        n_head=config_data['model']['n_head'],
+        n_embd=config_data['model']['n_embd'],
+        dropout=config_data['model']['dropout']
+    )
+
+    model = GPT(config)
+    model.eval()
+
+    # Generation settings
+    batch_size = 1
+    num_new_tokens = 50
+    start_context = torch.randint(0, vocab_size, (batch_size, 1))
+
+    # Warmup
+    _ = model.generate(start_context, max_new_tokens=5, temperature=1.0, top_p=0.9)
+
+    # Benchmark
+    start_time = time.time()
+    _ = model.generate(start_context, max_new_tokens=num_new_tokens, temperature=1.0, top_p=0.9)
+    end_time = time.time()
+
+    total_time = end_time - start_time
+    tokens_per_second = num_new_tokens / total_time
+
+    print(f"--- Generation Benchmark Results ---")
+    print(f"Tokens Generated: {num_new_tokens}")
+    print(f"Total Time: {total_time:.2f} seconds")
+    print(f"Throughput: {tokens_per_second:.2f} tokens/sec")
+    print(f"-----------------------")
+    return tokens_per_second
+
+if __name__ == "__main__":
+    run_gen_benchmark()

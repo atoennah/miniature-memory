@@ -6,3 +6,20 @@ model:
   dropout: 0.2
 training:
   batch_size: 64
+  learning_rate: 0.001
+  min_lr: 0.0001
+  warmup_iters: 20
+  lr_decay_iters: 100
+  max_steps: 1
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_interval: 10
+  output_dir: "out/benchmark"
+  decay_lr: true
+data:
+  path: "dataset/processed/train.txt"
+inference:
+  temperature: 1.0
+  top_p: 0.9

@@ -28,6 +28,19 @@ Entries in this journal must follow the format of a scientific paper or a concis
 
 ---
 
+## 2024-05-22: KV Cache & Inference Optimization
+
+-   **Discovery:** Autoregressive generation was re-computing the entire sequence at each step, leading to $O(N^2)$ complexity. This was the primary bottleneck for inference on CPU.
+-   **Strategy:** Implemented a Key-Value (KV) cache in `CausalSelfAttention` and `GPT.forward`. Modified `GPT.generate` to perform incremental generation by passing only the newest token and reusing the cache. Also switched from `@torch.no_grad()` to `@torch.inference_mode()` to reduce graph overhead.
+-   **Results:**
+    -   **Baseline (No Cache):** 128.42 tokens/sec
+    -   **Optimized (KV Cache):** 236.17 tokens/sec
+    -   **Improvement:** ~84% increase in inference throughput.
+-   **Conclusion:** KV caching is essential for efficient LLM inference, especially in CPU-bound environments. The implementation maintains "conceptual transparency" by explicitly passing and returning `presents` (the updated cache).
+-   **Philosophical Note:** We trade memory (caching activations) for time (computational reuse). In this architecture, moving small amounts of data is significantly cheaper than re-computing attention scores.
+
+---
+
 ## Entry: Initial Learning Rate Audit
 
 -   **Hypothesis:** The default learning rate of `1e-4` in `small.yaml` is too aggressive for the dataset and will result in a suboptimal loss. A more conservative `1e-5` should perform better.
