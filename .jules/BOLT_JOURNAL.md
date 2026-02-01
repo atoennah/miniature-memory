@@ -36,3 +36,14 @@ Entries in this journal must follow the format of a scientific paper or a concis
     -   **Baseline Loss (`lr=1e-4`):** 2.6345
     -   **Experimental Loss (`lr=1e-5`):** 3.3553
 -   **Conclusion:** Hypothesis **REJECTED**. The more aggressive `1e-4` learning rate is demonstrably more effective for this model over a 100-step micro-train. The faster convergence leads to a significantly lower loss.
+
+---
+
+## 2024-11-20: Optimizer Encapsulation & Scraper Refactor
+
+-   **Discovery:** The `Trainer` class was overburdened with model-specific optimizer configuration logic, violating the Principle of Encapsulation. Additionally, the scraper's `run_process` command was a monolithic "God Function" with inefficient browser management.
+-   **Strategy:**
+    1.  **Encapsulation:** Moved the complex weight decay and AdamW configuration from `Trainer` to `GPT.configure_optimizers`. This ensures that the model "knows" how it should be optimized, making it more portable and the trainer more modular.
+    2.  **Modular Scraper:** Refactored `run_process` into smaller, single-responsibility functions (`process_index_page`, `process_story`). Introduced a `BrowserManager` to maintain a persistent Playwright browser, significantly reducing launch overhead.
+    3.  **Schema Alignment:** Fixed a critical bug in `benchmark.py` that incorrectly indexed the nested configuration YAML, ensuring the tool remains reliable for throughput measurements.
+-   **Conclusion:** The codebase is now more **orthogonally organized**. By delegating responsibilities to their rightful owners (Model for optimization, BrowserManager for lifecycle), we have reduced cognitive load and improved system maintainability.

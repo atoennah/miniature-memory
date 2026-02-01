@@ -1,6 +1,25 @@
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, Playwright, Browser, Page
 from bs4 import BeautifulSoup
 import trafilatura
+
+class BrowserManager:
+    """
+    Manages a persistent Playwright browser instance to avoid the overhead
+    of launching a new browser for every request.
+    """
+    def __init__(self, playwright: Playwright, headless: bool = True):
+        self.playwright = playwright
+        self.browser: Browser = self.playwright.chromium.launch(headless=headless)
+        self.context = self.browser.new_context()
+        self._page: Page = self.context.new_page()
+
+    def get_page(self) -> Page:
+        """Returns the active page instance."""
+        return self._page
+
+    def close(self):
+        """Closes the browser and context."""
+        self.browser.close()
 
 def fetch_html(url: str) -> str | None:
     """

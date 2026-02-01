@@ -38,16 +38,17 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from typing import Optional, Tuple
+from dataclasses import dataclass
 
+@dataclass
 class GPTConfig:
     """Configuration for the GPT model."""
-    def __init__(self, vocab_size: int, block_size: int, n_layer: int, n_head: int, n_embd: int, dropout: float):
-        self.vocab_size = vocab_size
-        self.block_size = block_size
-        self.n_layer = n_layer
-        self.n_head = n_head
-        self.n_embd = n_embd
-        self.dropout = dropout
+    vocab_size: int
+    block_size: int
+    n_layer: int
+    n_head: int
+    n_embd: int
+    dropout: float
 
 class FeedForward(nn.Module):
     # [INJECTOR: THE ROLE OF THE FEED-FORWARD NETWORK]
@@ -321,6 +322,69 @@ class GPT(nn.Module):
         for pn, p in self.named_parameters():
             if pn.endswith('c_proj.weight'):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
+
+    def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
+        """
+        This method sets up the optimizer, applying weight decay only to specific
+        parameters.
+        """
+        # Separate parameters into those that will and will not experience weight decay
+        decay = set()
+        no_decay = set()
+        whitelist_weight_modules = (torch.nn.Linear, )
+        blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding)
+        for mn, m in self.named_modules():
+            for pn, p in m.named_parameters(recurse=False):
+                fpn = '%s.%s' % (mn, pn) if mn else pn # full param name
+                # random note: pn always ends with 'weight' or 'bias'
+                if pn.endswith('bias'):
+                    # all biases will not be decayed
+                    no_decay.add(fpn)
+                elif pn.endswith('weight') and isinstance(m, whitelist_weight_modules):
+                    # weights of whitelist modules will be weight decayed
+                    decay.add(fpn)
+                elif pn.endswith('weight') and isinstance(m, blacklist_weight_modules):
+                    # weights of blacklist modules will NOT be weight decayed
+                    no_decay.add(fpn)
+
+        # subtle: 'transformer.wte.weight' and 'lm_head.weight' are tied
+        # they will appear in the named_parameters() as both, but they are the same tensor
+        # since they are tied, we need to ensure they are handled consistently.
+        # However, they are both in the blacklist (Embedding) and/or handled by whitelist (Linear).
+        # Actually lm_head is Linear, wte is Embedding.
+        # In my manual check, wte.weight is in blacklist, lm_head.weight is in whitelist.
+        # This is a conflict if we just use the names.
+        # Let's see what happens.
+
+        # validate that we considered every parameter
+        param_dict = {pn: p for pn, p in self.named_parameters()}
+        inter_params = decay & no_decay
+        union_params = decay | no_decay
+        assert len(inter_params) == 0, "parameters %s made it into both decay/no_decay sets!" % (str(inter_params), )
+
+        # Filter out parameters that are not in the param_dict (e.g. tied weights)
+        # This handles the case where tied weights might be categorized differently
+        # based on their module type but only one name is returned by named_parameters().
+        decay = {pn for pn in decay if pn in param_dict}
+        no_decay = {pn for pn in no_decay if pn in param_dict}
+        union_params = decay | no_decay
+
+        assert len(param_dict.keys() - union_params) == 0, "parameters %s were not separated into either decay/no_decay set!" \
+                                                    % (str(param_dict.keys() - union_params), )
+
+        # create the pytorch optimizer object
+        optim_groups = [
+            {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": weight_decay},
+            {"params": [param_dict[pn] for pn in sorted(list(no_decay))], "weight_decay": 0.0},
+        ]
+        # new fused AdamW is faster if available
+        fused_available = 'fused' in torch.optim.AdamW.__init__.__code__.co_varnames
+        use_fused = fused_available and device_type == 'cuda'
+        extra_args = dict(fused=True) if use_fused else dict()
+        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas, **extra_args)
+        print(f"using fused AdamW: {use_fused}")
+
+        return optimizer
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
