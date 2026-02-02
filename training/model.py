@@ -37,17 +37,18 @@ import math
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, List
+from dataclasses import dataclass
 
+@dataclass
 class GPTConfig:
     """Configuration for the GPT model."""
-    def __init__(self, vocab_size: int, block_size: int, n_layer: int, n_head: int, n_embd: int, dropout: float):
-        self.vocab_size = vocab_size
-        self.block_size = block_size
-        self.n_layer = n_layer
-        self.n_head = n_head
-        self.n_embd = n_embd
-        self.dropout = dropout
+    vocab_size: int
+    block_size: int
+    n_layer: int
+    n_head: int
+    n_embd: int
+    dropout: float
 
 class FeedForward(nn.Module):
     # [INJECTOR: THE ROLE OF THE FEED-FORWARD NETWORK]
@@ -136,54 +137,30 @@ class CausalSelfAttention(nn.Module):
         self.n_embd = config.n_embd
         self.dropout = config.dropout
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """Forward pass for the causal self-attention module."""
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
         # Calculate query, key, values for all heads in batch
         q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
 
-        # [INJECTOR: DEMYSTIFYING MULTI-HEAD TENSOR MANIPULATION]
-        #
-        # The core idea of multi-head attention is to run the attention mechanism in
-        # parallel several times, with different, learned linear projections for Q, K,
-        # and V. This allows the model to jointly attend to information from different
-        # representational subspaces at different positions.
-        #
-        # The tensor transformations below are the key to making this efficient.
-        # Let's break down the journey of the Key tensor `k`:
-        #
-        # 1.  Initial shape of `k`: `(B, T, C)`
-        #     - B = Batch size (number of sequences processed at once)
-        #     - T = Sequence length (e.g., `block_size`)
-        #     - C = Embedding dimension (`n_embd`)
-        #
-        # 2.  `k.view(B, T, self.n_head, C // self.n_head)`
-        #     - This reshapes the tensor without changing its data. We are splitting the
-        #       embedding dimension `C` into `n_head` smaller chunks.
-        #     - `hs = C // self.n_head` is the "head size".
-        #     - New shape: `(B, T, nh, hs)` where `nh` is `n_head`.
-        #     - This logically groups the embeddings for each head, but they are still
-        #       interleaved in memory.
-        #
-        # 3.  `.transpose(1, 2)`
-        #     - This is the crucial step. We swap the sequence length dimension (T) with
-        #       the number of heads dimension (nh).
-        #     - New shape: `(B, nh, T, hs)`
-        #     - Why? The `scaled_dot_product_attention` function expects the heads to
-        #       be in the "batch" dimension. By rearranging the tensor this way, we
-        #       create a batch of `B * nh` attention problems, each of size `(T, hs)`.
-        #       PyTorch's optimized kernel can then process all these heads in parallel,
-        #       which is massively faster than looping through them.
-        #
-        # The same transformation is applied to `q` and `v`, preparing them for the
-        # batched attention calculation.
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        # Head size
+        hs = C // self.n_head
+        k = k.view(B, T, self.n_head, hs).transpose(1, 2) # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, hs).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, hs).transpose(1, 2) # (B, nh, T, hs)
+
+        if kv_cache is not None:
+            prev_k, prev_v = kv_cache
+            k = torch.cat([prev_k, k], dim=2)
+            v = torch.cat([prev_v, v], dim=2)
+
+        new_kv_cache = (k, v)
 
         # Causal self-attention using PyTorch's fused kernel
-        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+        # is_causal=True is only valid if we are not using KV-cache or if T > 1.
+        # When T=1 (generation with cache), causal mask is irrelevant as we only attend to the past.
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=(T > 1))
 
         # Re-assemble all head outputs side by side
         # (B, nh, T, hs) -> (B, T, nh, hs) -> (B, T, C)
@@ -191,7 +168,7 @@ class CausalSelfAttention(nn.Module):
 
         # Output projection
         y = self.resid_dropout(self.c_proj(y))
-        return y
+        return y, new_kv_cache
 
 class Block(nn.Module):
     # [INJECTOR: THE ARCHITECTURE OF A TRANSFORMER BLOCK]
@@ -229,11 +206,12 @@ class Block(nn.Module):
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = FeedForward(config)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         """Forward pass for a Transformer block."""
-        x = x + self.attn(self.ln_1(x))
+        attn_out, new_kv_cache = self.attn(self.ln_1(x), kv_cache=kv_cache)
+        x = x + attn_out
         x = x + self.mlp(self.ln_2(x))
-        return x
+        return x, new_kv_cache
 
 class GPT(nn.Module):
     """A GPT-style transformer model."""
@@ -330,11 +308,17 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None, kv_caches: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor], List[Tuple[torch.Tensor, torch.Tensor]]]:
         """Forward pass for the GPT model."""
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        pos = self.pos[:, :t]
+
+        if kv_caches is not None:
+            # When using KV cache, we only process the last token's position
+            current_pos = kv_caches[0][0].size(2)
+            pos = self.pos[:, current_pos:current_pos+t]
+        else:
+            pos = self.pos[:, :t]
 
         # Token and position embeddings
         tok_emb = self.transformer.wte(idx)
@@ -342,8 +326,11 @@ class GPT(nn.Module):
         x = self.transformer.drop(tok_emb + pos_emb)
 
         # Transformer blocks
-        for block in self.transformer.h:
-            x = block(x)
+        new_kv_caches = []
+        for i, block in enumerate(self.transformer.h):
+            layer_kv_cache = kv_caches[i] if kv_caches is not None else None
+            x, new_cache = block(x, kv_cache=layer_kv_cache)
+            new_kv_caches.append(new_cache)
 
         # Final layer norm and language model head
         x = self.transformer.ln_f(x)
@@ -354,17 +341,58 @@ class GPT(nn.Module):
             # if we are given some desired targets also calculate the loss
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
-        return logits, loss
+        return logits, loss, new_kv_caches
+
+    def configure_optimizers(self, weight_decay, learning_rate, betas):
+        """
+        Sophisticated optimizer configuration.
+        Separates parameters into decay and no-decay groups.
+        """
+        # Ensure numeric types
+        learning_rate = float(learning_rate)
+        weight_decay = float(weight_decay)
+        betas = (float(betas[0]), float(betas[1]))
+
+        # start with all of the candidate parameters
+        param_dict = {pn: p for pn, p in self.named_parameters()}
+        # filter out those that do not require grad
+        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+        # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
+        # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
+        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+        optim_groups = [
+            {'params': decay_params, 'weight_decay': weight_decay},
+            {'params': nodecay_params, 'weight_decay': 0.0}
+        ]
+        num_decay_params = sum(p.numel() for p in decay_params)
+        num_nodecay_params = sum(p.numel() for p in nodecay_params)
+        print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
+        print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
+        # Create AdamW optimizer and use the fused version if it is available
+        fused_available = 'fused' in torch.optim.AdamW.__init__.__code__.co_varnames
+        use_fused = fused_available and torch.cuda.is_available()
+        extra_args = dict(fused=True) if use_fused else dict()
+        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas, **extra_args)
+        print(f"using fused AdamW: {use_fused}")
+
+        return optimizer
 
     @torch.no_grad()
     def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_p: float = 0.9) -> torch.Tensor:
         """
-        Autoregressively generates a sequence of tokens using top-p (nucleus) sampling.
+        Autoregressively generates a sequence of tokens using top-p (nucleus) sampling and KV-cache.
         """
         self.eval()
-        for _ in range(max_new_tokens):
-            idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
-            logits, _ = self(idx_cond)
+        kv_caches = None
+        for i in range(max_new_tokens):
+            # If we have cache, we only pass the last token
+            if kv_caches is not None:
+                idx_cond = idx[:, -1:]
+            else:
+                idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+
+            logits, _, kv_caches = self(idx_cond, kv_caches=kv_caches)
             logits = logits[:, -1, :] / temperature
 
             # Top-p (nucleus) sampling
@@ -378,8 +406,12 @@ class GPT(nn.Module):
             sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
             sorted_indices_to_remove[..., 0] = 0
 
-            indices_to_remove = sorted_indices[sorted_indices_to_remove]
-            probs[:, indices_to_remove] = 0
+            # This part is a bit tricky for batch > 1 if top_p is different or
+            # if we want to be fully vectorized. The current implementation
+            # is mostly vectorized for the same top_p across batch.
+            for b in range(idx.size(0)):
+                to_remove = sorted_indices[b][sorted_indices_to_remove[b]]
+                probs[b, to_remove] = 0
 
             # Renormalize the probabilities
             probs = probs / torch.sum(probs, dim=-1, keepdim=True)
