@@ -36,3 +36,15 @@ Entries in this journal must follow the format of a scientific paper or a concis
     -   **Baseline Loss (`lr=1e-4`):** 2.6345
     -   **Experimental Loss (`lr=1e-5`):** 3.3553
 -   **Conclusion:** Hypothesis **REJECTED**. The more aggressive `1e-4` learning rate is demonstrably more effective for this model over a 100-step micro-train. The faster convergence leads to a significantly lower loss.
+
+---
+
+## 2024-07-25: KV-Caching for Autoregressive Generation
+
+-   **Discovery:** The generation logic was re-processing the entire context at every step, leading to quadratic $O(N^2)$ slowdown. Throughput dropped by ~61% when increasing generation length from 50 to 200 tokens.
+-   **Strategy:** Implemented KV-caching across the model. Updated `CausalSelfAttention`, `Block`, and `GPT` to handle persistent state, and refactored `GPT.generate` to perform incremental decoding.
+-   **Results:**
+    -   **Naive Throughput (200 tokens):** 44.4 tokens/sec
+    -   **Optimized Throughput (200 tokens):** 196.9 tokens/sec
+    -   **Change:** 343% improvement (4.4x speedup).
+-   **Conclusion:** KV-caching is non-negotiable for efficient inference. The architectural change to a 3-tuple return signature is a worthwhile trade-off for the massive gain in generation speed.
