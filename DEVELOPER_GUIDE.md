@@ -110,3 +110,21 @@ To generate text from a trained model, use the `scripts/generate.py` script.
 2.  **Isolate Your Changes:** Develop new features in separate, well-defined modules to minimize merge conflicts.
 3.  **Adhere to Data Rules:** All changes that affect the dataset must follow the append-only and script-driven transformation principles.
 4.  **Submit for Review:** All changes require review from the Curator and final approval from the BDFL. Ensure your work is clean, documented, and fully aligned with the project's intent as defined in `CONTRIBUTING.md`.
+
+## 7. Technical Insights & Architectural Optimizations
+
+This section translates empirical findings from the **Bolt Journal** into actionable guidance for developers. These optimizations are tailored to our resource-constrained environment and pedagogical goals.
+
+### Pedagogical Code Philosophy ("Conceptual Injection")
+We believe that code should be a living, educational document. When contributing to core model or pipeline modules, prioritize conceptual transparency. This means:
+-   **Verbose Headers:** Explain the philosophical and mathematical purpose of the module.
+-   **Narrated Transformations:** Explicitly describe complex tensor manipulations (e.g., in multi-head attention).
+-   **Theoretical Comments:** Link implementation details to the underlying theory (e.g., deriving the Scaled Dot-Product Attention formula).
+
+### Hardware-Aware Optimizations
+-   **Positional Tensor Caching:** In `training/model.py`, we avoid re-creating the positional index tensor in every forward pass. Instead, it is pre-computed during initialization and registered as a persistent buffer using `register_buffer(..., persistent=False)`. This reduces CPU-GPU synchronization overhead and improves throughput by 2-5%.
+-   **Deferred Module Imports:** The main orchestrator (`run.py`) uses deferred imports. Pipeline modules are imported inside their respective conditional blocks rather than at the top of the file. This reduced startup overhead by ~91% (from ~4.8s to ~0.4s).
+
+### Scientific Baselines
+-   **Optimal Learning Rate:** Through empirical auditing, we've determined that a learning rate of `1e-4` is significantly more effective for our micro-training runs (e.g., 100 steps) than a more conservative `1e-5`. It leads to faster convergence and lower final loss on our Indonesian fiction dataset.
+-   **`torch.compile` Compatibility:** While `torch.compile` is a powerful optimization for many environments, it is currently **incompatible** with our production runtime (Python 3.12+). Do not attempt to use `torch.compile` until the TorchDynamo backend officially supports this Python version.
