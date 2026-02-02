@@ -28,6 +28,20 @@ Entries in this journal must follow the format of a scientific paper or a concis
 
 ---
 
+## 2024-07-25: KV-Cache Implementation & Deep Kernel Documentation
+
+-   **Discovery:** Autoregressive generation was $O(T^2)$ due to redundant hidden state recomputation. Additionally, the optimized fused kernels in PyTorch were being used as "black boxes" without conceptual transparency.
+-   **Strategy:**
+    1.  Refactored `model.py` to `transformer.py` for architectural clarity.
+    2.  Implemented a Key-Value (KV) cache to transform generation cost to $O(1)$ per token.
+    3.  Injected "The Logos of the Kernel" (FlashAttention theory) and "The Logos of KV-Caching" to illuminate the underlying mathematical and engineering trade-offs.
+-   **Results:**
+    -   Generation is now computationally efficient ($O(T)$ total for $T$ tokens).
+    -   Documentation now serves as a high-level technical encyclopedia for the Transformer's most complex components.
+-   **Philosophical Note:** Efficiency without understanding is hollow. By implementing the KV-cache and documenting the FlashAttention kernel, we provide both the performance and the "Logos" behind it.
+
+---
+
 ## Entry: Initial Learning Rate Audit
 
 -   **Hypothesis:** The default learning rate of `1e-4` in `small.yaml` is too aggressive for the dataset and will result in a suboptimal loss. A more conservative `1e-5` should perform better.

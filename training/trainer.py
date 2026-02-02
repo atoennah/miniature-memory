@@ -40,7 +40,7 @@ import torch.nn as nn
 from typing import Dict, Any, Optional
 
 from .data_loader import DataManager
-from .model import GPT, GPTConfig
+from .transformer import GPT, GPTConfig
 
 class Trainer:
     """
@@ -183,7 +183,7 @@ class Trainer:
         xb, yb = self.data_manager.get_batch()
 
         with torch.amp.autocast(device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')):
-            _, loss = self.model(xb, yb)
+            _, loss, _ = self.model(xb, yb)
 
         self.optimizer.zero_grad(set_to_none=True)
         scaler.scale(loss).backward()

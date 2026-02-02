@@ -2,7 +2,7 @@
 import time
 import torch
 import yaml
-from training.model import GPT, GPTConfig
+from training.transformer import GPT, GPTConfig
 
 def run_benchmark(config_path='training/configs/benchmark.yaml'):
     """
@@ -15,21 +15,25 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     # Use a dummy vocab_size for benchmark purposes
     vocab_size = 512
 
+    # Support both nested (model/training) and flat configuration structures
+    model_cfg = config_data.get('model', config_data)
+    training_cfg = config_data.get('training', config_data)
+
     config = GPTConfig(
         vocab_size=vocab_size,
-        block_size=config_data['block_size'],
-        n_layer=config_data['n_layer'],
-        n_head=config_data['n_head'],
-        n_embd=config_data['n_embd'],
-        dropout=config_data['dropout']
+        block_size=model_cfg['block_size'],
+        n_layer=model_cfg['n_layer'],
+        n_head=model_cfg['n_head'],
+        n_embd=model_cfg['n_embd'],
+        dropout=model_cfg['dropout']
     )
 
     model = GPT(config)
     model.eval() # Set to eval mode to disable dropout for benchmark
 
     # Generate dummy data
-    batch_size = config_data['batch_size']
-    block_size = config_data['block_size']
+    batch_size = training_cfg['batch_size']
+    block_size = model_cfg['block_size']
     dummy_input = torch.randint(0, vocab_size, (batch_size, block_size))
     dummy_target = torch.randint(0, vocab_size, (batch_size, block_size))
 
@@ -39,12 +43,12 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
 
     # Warmup phase
     for _ in range(warmup_steps):
-        _, _ = model(dummy_input, dummy_target)
+        _, _, _ = model(dummy_input, dummy_target)
 
     # Benchmark phase
     start_time = time.time()
     for _ in range(num_steps):
-        _, _ = model(dummy_input, dummy_target)
+        _, _, _ = model(dummy_input, dummy_target)
     end_time = time.time()
 
     # Calculate throughput
