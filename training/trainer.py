@@ -85,52 +85,16 @@ class Trainer:
 
     def _build_optimizer(self) -> torch.optim.Optimizer:
         """
-        Builds the AdamW optimizer with a sophisticated weight decay strategy.
-        This method separates model parameters into two groups: those that will
-        experience weight decay and those that will not. Typically, biases,
-        LayerNorm weights, and Embedding weights are not weight-decayed.
-        This helps prevent overfitting without harming model performance.
-        Returns:
-            torch.optim.Optimizer: The configured AdamW optimizer.
+        [BOLT: DELEGATED OPTIMIZATION]
+        The Trainer now delegates optimizer construction to the Model.
+        This follows the principle of Encapsulation: the model knows best which
+        of its parameters should be decayed.
         """
-        decay = set()
-        no_decay = set()
-        whitelist_weight_modules = (torch.nn.Linear, )
-        blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding)
-
-        # Iterate over all named modules and their parameters
-        for mn, m in self.model.named_modules():
-            for pn, p in m.named_parameters():
-                fpn = '%s.%s' % (mn, pn) if mn else pn
-
-                # Biases are never decayed
-                if pn.endswith('bias'):
-                    no_decay.add(fpn)
-                # Weights of linear layers are decayed
-                elif pn.endswith('weight') and isinstance(m, whitelist_weight_modules):
-                    decay.add(fpn)
-                # Weights of LayerNorm and Embedding are not decayed
-                elif pn.endswith('weight') and isinstance(m, blacklist_weight_modules):
-                    no_decay.add(fpn)
-
-        # Sanity checks to ensure every parameter is in one of the sets
-        param_dict = {pn: p for pn, p in self.model.named_parameters()}
-        inter_params = decay & no_decay
-        union_params = decay | no_decay
-        assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
-        assert len(param_dict.keys() - union_params) == 0, "Parameters not in decay/no_decay sets"
-
-        optim_groups = [
-            {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": self.config['training']['weight_decay']},
-            {"params": [param_dict[pn] for pn in sorted(list(no_decay))], "weight_decay": 0.0},
-        ]
-
-        learning_rate = self.config['training']['learning_rate']
-        beta1 = self.config['training']['beta1']
-        beta2 = self.config['training']['beta2']
-        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=(beta1, beta2))
-
-        return optimizer
+        return self.model.configure_optimizers(
+            weight_decay=self.config['training']['weight_decay'],
+            learning_rate=self.config['training']['learning_rate'],
+            betas=(self.config['training']['beta1'], self.config['training']['beta2'])
+        )
 
     def _get_lr(self, it: int) -> float:
         """
@@ -182,8 +146,11 @@ class Trainer:
         grad_clip = self.config['training'].get('grad_clip', 1.0)
         xb, yb = self.data_manager.get_batch()
 
+        # [BOLT: TUPLE UNPACKING]
+        # We now unpack 3 values from the model's forward pass.
+        # The KV cache is ignored during training.
         with torch.amp.autocast(device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')):
-            _, loss = self.model(xb, yb)
+            _, loss, _ = self.model(xb, yb)
 
         self.optimizer.zero_grad(set_to_none=True)
         scaler.scale(loss).backward()
