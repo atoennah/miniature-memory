@@ -1,38 +1,111 @@
-from playwright.sync_api import sync_playwright
-from bs4 import BeautifulSoup
+import atexit
+from playwright.sync_api import sync_playwright, Browser, Page, Playwright
 import trafilatura
+
+class BrowserManager:
+    """
+    Manages the lifecycle of a Playwright browser instance.
+
+    This class implements the "Persistent Browser" pattern, ensuring that a
+    single browser instance is reused across multiple requests. This
+    significantly reduces the overhead of launching and closing the browser
+    process for every URL, which is the primary bottleneck in web scraping.
+    """
+
+    def __init__(self, headless: bool = True):
+        """
+        Initializes the BrowserManager.
+
+        Args:
+            headless (bool): Whether to run the browser in headless mode.
+                             Defaults to True for production scraping.
+        """
+        self.headless = headless
+        self._playwright: Playwright | None = None
+        self._browser: Browser | None = None
+
+    def start(self) -> Browser:
+        """
+        Starts the Playwright instance and launches the browser if not already running.
+
+        Returns:
+            Browser: The active Playwright Browser instance.
+        """
+        if not self._browser:
+            print("⚡ Bolt: Initializing persistent browser instance...")
+            self._playwright = sync_playwright().start()
+            self._browser = self._playwright.chromium.launch(headless=self.headless)
+        return self._browser
+
+    def shutdown(self):
+        """
+        Gracefully shuts down the browser and the Playwright instance.
+        """
+        if self._browser:
+            print("⚡ Bolt: Shutting down persistent browser...")
+            self._browser.close()
+            self._browser = None
+        if self._playwright:
+            self._playwright.stop()
+            self._playwright = None
+
+    def get_page(self) -> Page:
+        """
+        Creates and returns a new page in the persistent browser.
+
+        Returns:
+            Page: A new Playwright Page object.
+        """
+        browser = self.start()
+        return browser.new_page()
+
+    def fetch_page_content(self, url: str, timeout: int = 60000) -> str | None:
+        """
+        Fetches the full HTML content of a URL.
+
+        This method encapsulates the navigation logic, including waiting for the
+        'networkidle' state to ensure that dynamic JavaScript content has
+        finished loading.
+
+        Args:
+            url (str): The target URL to fetch.
+            timeout (int): The maximum time to wait for the page to load (ms).
+
+        Returns:
+            str | None: The HTML content as a string, or None if navigation fails.
+        """
+        page = self.get_page()
+        try:
+            page.goto(url, timeout=timeout)
+            # Wait for the network to be idle, indicating the page has likely loaded
+            page.wait_for_load_state('networkidle')
+            return page.content()
+        except Exception as e:
+            print(f"Error fetching {url} with BrowserManager: {e}")
+            return None
+        finally:
+            page.close()
+
+# Global instance for easy reuse across the module
+_browser_manager = BrowserManager()
+
+# Ensure the browser is shut down when the script exits
+atexit.register(_browser_manager.shutdown)
 
 def fetch_html(url: str) -> str | None:
     """
-    Fetches the HTML content for a given URL using a headless browser.
-
-    Args:
-        url (str): The URL to fetch.
-
-    Returns:
-        str | None: The HTML content as a string, or None if an error occurs.
+    Legacy wrapper for fetching HTML content.
+    Now uses the persistent BrowserManager.
     """
-
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            # Set a longer timeout (60 seconds) for pages that are slow to load
-            page.goto(url, timeout=60000)
-            # Wait for the network to be idle, indicating the page has likely loaded
-            page.wait_for_load_state('networkidle')
-            html = page.content()
-            browser.close()
-            return html
-    except Exception as e:
-        print(f"Error fetching {url} with Playwright: {e}")
-        return None
+    return _browser_manager.fetch_page_content(url)
 
 def extract_text(html: str) -> str:
     """
     Extracts the main story text from HTML using trafilatura.
-    This is much more effective at removing boilerplate than a simple
-    paragraph-tag search.
+
+    Trafilatura is a high-performance library specifically designed to
+    identify and extract the core narrative content from a webpage while
+    filtering out UI noise like menus, ads, and footers.
 
     Args:
         html (str): The HTML content of the page.
@@ -43,6 +116,6 @@ def extract_text(html: str) -> str:
     if not html:
         return ""
 
-    # Trafilatura is a library specifically designed to extract the main
-    # text content from a webpage, filtering out menus, ads, and footers.
-    return trafilatura.extract(html)
+    # trafilatura.extract is deterministic and optimized for high-quality extraction.
+    extracted = trafilatura.extract(html)
+    return extracted if extracted else ""

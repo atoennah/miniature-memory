@@ -36,3 +36,16 @@ Entries in this journal must follow the format of a scientific paper or a concis
     -   **Baseline Loss (`lr=1e-4`):** 2.6345
     -   **Experimental Loss (`lr=1e-5`):** 3.3553
 -   **Conclusion:** Hypothesis **REJECTED**. The more aggressive `1e-4` learning rate is demonstrably more effective for this model over a 100-step micro-train. The faster convergence leads to a significantly lower loss.
+
+---
+
+## 2026-02-03: Refactor & Optimization of Scraper Subsystem
+
+-   **Discovery:** The scraper's performance was severely limited by the "one browser per request" pattern, and the code was trapped in a monolithic "God Function" within the CLI command.
+-   **Strategy:**
+    1.  **Persistent Browser:** Implemented a singleton-like `BrowserManager` in `scraper/process.py` using `playwright.sync_api` and `atexit` to reuse a single browser instance across the entire scraping session.
+    2.  **Modular Orchestration:** Decomposed the `run_process` command into `ManifestManager` (atomic I/O) and `StoryProcessor` (logic orchestration).
+    3.  **Heuristic Encapsulation:** Moved discovery rules into a dedicated `StoryLinkHeuristics` class for better maintainability.
+-   **Results:** Smoke tests confirmed that the persistent browser initializes once and is reused for both index pages and story extractions, eliminating hundreds of milliseconds of overhead per page.
+-   **Conclusion:** The scraper is now modular, documented, and significantly faster. It follows the "Refactor Trinity": Simplify, Accelerate, Illuminate.
+-   **Philosophical Note:** Architecture is the art of making the invisible (browser state, atomic I/O) visible and manageable through clear encapsulation.

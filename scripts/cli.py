@@ -29,6 +29,11 @@ def main():
     process_parser = subparsers.add_parser(
         "process", help="Heuristically crawl index pages to find and process story URLs."
     )
+    process_parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug mode (captures screenshots and DOM dumps)."
+    )
     process_parser.set_defaults(func=run_process)
 
     args = parser.parse_args()
