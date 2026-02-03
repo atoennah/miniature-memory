@@ -36,3 +36,15 @@ Entries in this journal must follow the format of a scientific paper or a concis
     -   **Baseline Loss (`lr=1e-4`):** 2.6345
     -   **Experimental Loss (`lr=1e-5`):** 3.3553
 -   **Conclusion:** Hypothesis **REJECTED**. The more aggressive `1e-4` learning rate is demonstrably more effective for this model over a 100-step micro-train. The faster convergence leads to a significantly lower loss.
+
+---
+
+## 2024-07-24: Statefulness & The Logos of Attention
+
+-   **Discovery:** The generation process was O(T^2), re-computing the entire KV-history for every new token. This is computationally wasteful and non-scalable. Additionally, the core attention kernel was a "black box" to future developers.
+-   **Strategy:** Injected a stateful KV-cache into the `CausalSelfAttention` and `GPT` modules. Verbose theoretical headers were added to document the mathematical derivation of attention and the memory-efficient properties of fused kernels (FlashAttention).
+-   **Results:**
+    -   **Temporal Complexity:** Reduced from O(T^2) to O(T) during generation.
+    -   **Pedagogical Depth:** The module now contains ~100 lines of high-value technical documentation, transforming it into an educational asset.
+-   **Conclusion:** By making the "invisible" state (KV-cache) visible and documented, we have significantly improved both the performance and the clarity of the core model.
+-   **Philosophical Note:** "Optimization without documentation is just debt. Optimization with theory is a legacy."
