@@ -37,7 +37,7 @@ import math
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 class GPTConfig:
     """Configuration for the GPT model."""
@@ -136,7 +136,7 @@ class CausalSelfAttention(nn.Module):
         self.n_embd = config.n_embd
         self.dropout = config.dropout
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """Forward pass for the causal self-attention module."""
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
@@ -182,8 +182,16 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
+        if past_kv is not None:
+            pk, pv = past_kv
+            k = torch.cat((pk, k), dim=2)
+            v = torch.cat((pv, v), dim=2)
+
+        present_kv = (k, v)
+
         # Causal self-attention using PyTorch's fused kernel
-        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+        # We only use causal mask if we have more than one token in the query
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=(T > 1))
 
         # Re-assemble all head outputs side by side
         # (B, nh, T, hs) -> (B, T, nh, hs) -> (B, T, C)
@@ -191,7 +199,7 @@ class CausalSelfAttention(nn.Module):
 
         # Output projection
         y = self.resid_dropout(self.c_proj(y))
-        return y
+        return y, present_kv
 
 class Block(nn.Module):
     # [INJECTOR: THE ARCHITECTURE OF A TRANSFORMER BLOCK]
@@ -229,11 +237,12 @@ class Block(nn.Module):
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = FeedForward(config)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """Forward pass for a Transformer block."""
-        x = x + self.attn(self.ln_1(x))
+        attn_out, present_kv = self.attn(self.ln_1(x), past_kv=past_kv)
+        x = x + attn_out
         x = x + self.mlp(self.ln_2(x))
-        return x
+        return x, present_kv
 
 class GPT(nn.Module):
     """A GPT-style transformer model."""
@@ -330,11 +339,20 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None, past_kv: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor], List[Tuple[torch.Tensor, torch.Tensor]]]:
         """Forward pass for the GPT model."""
         b, t = idx.size()
-        assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        pos = self.pos[:, :t]
+
+        # Determine positional offset if using KV cache
+        pos_offset = 0
+        if past_kv is not None:
+            for kv in past_kv:
+                if kv is not None:
+                    pos_offset = kv[0].size(2)
+                    break
+
+        assert pos_offset + t <= self.config.block_size, f"Cannot forward sequence of length {pos_offset + t}, block size is only {self.config.block_size}"
+        pos = self.pos[:, pos_offset : pos_offset + t]
 
         # Token and position embeddings
         tok_emb = self.transformer.wte(idx)
@@ -342,8 +360,13 @@ class GPT(nn.Module):
         x = self.transformer.drop(tok_emb + pos_emb)
 
         # Transformer blocks
-        for block in self.transformer.h:
-            x = block(x)
+        if past_kv is None:
+            past_kv = [None] * len(self.transformer.h)
+
+        present_kv = []
+        for i, block in enumerate(self.transformer.h):
+            x, kv = block(x, past_kv=past_kv[i])
+            present_kv.append(kv)
 
         # Final layer norm and language model head
         x = self.transformer.ln_f(x)
@@ -354,17 +377,24 @@ class GPT(nn.Module):
             # if we are given some desired targets also calculate the loss
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
-        return logits, loss
+        return logits, loss, present_kv
 
     @torch.no_grad()
     def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_p: float = 0.9) -> torch.Tensor:
         """
         Autoregressively generates a sequence of tokens using top-p (nucleus) sampling.
+        Optimized with KV caching.
         """
         self.eval()
+        past_kv = None
         for _ in range(max_new_tokens):
-            idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
-            logits, _ = self(idx_cond)
+            # If we have a cache and haven't exceeded block_size, only process the last token
+            if past_kv is not None:
+                idx_cond = idx[:, -1:]
+            else:
+                idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+
+            logits, _, past_kv = self(idx_cond, past_kv=past_kv)
             logits = logits[:, -1, :] / temperature
 
             # Top-p (nucleus) sampling
@@ -386,6 +416,10 @@ class GPT(nn.Module):
 
             idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, idx_next), dim=1)
+
+            # If we reach block_size, reset cache for the next truncation window
+            if idx.size(1) >= self.config.block_size:
+                past_kv = None
 
         self.train()
         return idx
