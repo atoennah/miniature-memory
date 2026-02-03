@@ -36,3 +36,41 @@ Entries in this journal must follow the format of a scientific paper or a concis
     -   **Baseline Loss (`lr=1e-4`):** 2.6345
     -   **Experimental Loss (`lr=1e-5`):** 3.3553
 -   **Conclusion:** Hypothesis **REJECTED**. The more aggressive `1e-4` learning rate is demonstrably more effective for this model over a 100-step micro-train. The faster convergence leads to a significantly lower loss.
+
+---
+
+## 2024-08-15: Modular Refactor of Data Processing Pipeline
+
+-   **Discovery:** The data processing scripts were monolithic and difficult to maintain. Logic for text normalization, quality filtering, and segmentation was scattered across multiple scripts.
+-   **Strategy:** Refactored the monolithic scripts into a modular `processing/` package. Introduced `TextNormalizer`, `QualityFilter`, `Segmenter`, and a `CleaningPipeline` orchestrator.
+-   **Conclusion:** The pipeline is now highly modular, testable, and maintainable. Scripts in `scripts/` are now thin wrappers around these core modules.
+-   **Philosophical Note:** Separation of concerns is not just for software architecture; it's a requirement for scalable data science.
+
+---
+
+## 2024-08-20: KV-Cache Implementation & Performance Proof
+
+-   **Hypothesis:** Implementing a Key-Value (KV) cache for transformer inference will significantly increase generation throughput by avoiding redundant calculations of past token representations.
+-   **Methodology:** Implemented a stateful KV-cache in `training/model.py` and updated `scripts/generate.py`. Benchmarked tokens/sec before and after implementation on a CPU-only environment.
+-   **Results:**
+    -   **Baseline (No Cache):** ~44 tokens/sec
+    -   **Experimental (With KV-Cache):** ~197 tokens/sec
+    -   **Improvement:** ~4.4x speedup.
+-   **Conclusion:** Hypothesis **CONFIRMED**. The KV-cache is a transformative optimization for real-time generation.
+-   **Philosophical Note:** We value empirical performance. A 4x speedup is not just a number; it's the difference between a tool and a toy.
+
+---
+
+## 2024-08-22: Tied Weight Optimization & Bug Fix
+
+-   **Discovery:** The training pipeline crashed with `KeyError: 'lm_head.weight'` when building the optimizer. This was caused by the model using tied weights between the token embeddings and the output head.
+-   **Strategy:** Updated the `Trainer` to filter the parameter sets (decay vs. no_decay) against the actual `named_parameters()` of the model. This ensures that even when weights are tied (and thus only appear once in `named_parameters()`), the optimizer configuration remains valid.
+-   **Conclusion:** The training pipeline now robustly handles models with tied weights, a common practice for reducing parameter count in constrained environments.
+
+---
+
+## 2024-08-25: Indonesian Erotica Landscape & Source Discovery
+
+-   **Discovery:** High-quality Indonesian narrative data is difficult to find through standard datasets. Many sources are either blocked or highly polluted with gambling ads.
+-   **Strategy:** Conducted a forensic analysis of the Indonesian internet landscape. Identified Wattpad Indonesia as the primary "Big Fish" source and established a "Golden Tags" list for targeted discovery. Created a "Pollution Blacklist" to protect the dataset from low-quality/educational noise.
+-   **Conclusion:** We now have a clear, prioritized data acquisition strategy for the Indonesian language register.

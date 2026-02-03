@@ -8,6 +8,10 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     """
     Benchmarks the training throughput of the GPT model.
     """
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1].endswith('.yaml'):
+        config_path = sys.argv[1]
+
     # Load configuration from YAML
     with open(config_path, 'r') as f:
         config_data = yaml.safe_load(f)
@@ -15,21 +19,29 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     # Use a dummy vocab_size for benchmark purposes
     vocab_size = 512
 
+    # Handle nested vs flat config
+    if 'model' in config_data:
+        m_cfg = config_data['model']
+        t_cfg = config_data.get('training', config_data)
+    else:
+        m_cfg = config_data
+        t_cfg = config_data
+
     config = GPTConfig(
         vocab_size=vocab_size,
-        block_size=config_data['block_size'],
-        n_layer=config_data['n_layer'],
-        n_head=config_data['n_head'],
-        n_embd=config_data['n_embd'],
-        dropout=config_data['dropout']
+        block_size=m_cfg['block_size'],
+        n_layer=m_cfg['n_layer'],
+        n_head=m_cfg['n_head'],
+        n_embd=m_cfg['n_embd'],
+        dropout=m_cfg['dropout']
     )
 
     model = GPT(config)
     model.eval() # Set to eval mode to disable dropout for benchmark
 
     # Generate dummy data
-    batch_size = config_data['batch_size']
-    block_size = config_data['block_size']
+    batch_size = t_cfg.get('batch_size', 32)
+    block_size = m_cfg['block_size']
     dummy_input = torch.randint(0, vocab_size, (batch_size, block_size))
     dummy_target = torch.randint(0, vocab_size, (batch_size, block_size))
 

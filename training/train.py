@@ -25,11 +25,21 @@ def run_training(config: Dict[str, Any]) -> None:
     Args:
         config: A dictionary containing the training configuration.
     """
+    # Handle nested vs flat config
+    if 'model' in config:
+        m_cfg = config['model']
+        t_cfg = config.get('training', config)
+        d_cfg = config.get('data', config)
+    else:
+        m_cfg = config
+        t_cfg = config
+        d_cfg = config
+
     # Initialize the data manager
     data_manager = DataManager(
-        data_path=config['data']['path'],
-        block_size=config['model']['block_size'],
-        batch_size=config['training']['batch_size'],
+        data_path=d_cfg.get('path', 'dataset/processed/train.txt'),
+        block_size=m_cfg['block_size'],
+        batch_size=t_cfg['batch_size'],
         device='cuda' if torch.cuda.is_available() else 'cpu'
     )
 

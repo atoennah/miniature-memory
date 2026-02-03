@@ -30,16 +30,26 @@ def main(config, checkpoint_path, max_new_tokens, start_text):
     """Generates text from a trained model and measures resource usage."""
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+    # Handle nested vs flat config
+    if 'model' in config:
+        m_cfg = config['model']
+        i_cfg = config.get('inference', config)
+        d_cfg = config.get('data', config)
+    else:
+        m_cfg = config
+        i_cfg = config
+        d_cfg = config
+
     # --- Load Model and Tokenizer ---
-    vocab_size, encode, decode = get_tokenizer(config['data']['path'])
+    vocab_size, encode, decode = get_tokenizer(d_cfg.get('path', 'dataset/processed/train.txt'))
 
     gpt_config = GPTConfig(
         vocab_size=vocab_size,
-        block_size=config['model']['block_size'],
-        n_layer=config['model']['n_layer'],
-        n_head=config['model']['n_head'],
-        n_embd=config['model']['n_embd'],
-        dropout=config['model']['dropout']
+        block_size=m_cfg['block_size'],
+        n_layer=m_cfg['n_layer'],
+        n_head=m_cfg['n_head'],
+        n_embd=m_cfg['n_embd'],
+        dropout=m_cfg.get('dropout', 0.0)
     )
 
     model = GPT(gpt_config)
@@ -64,8 +74,8 @@ def main(config, checkpoint_path, max_new_tokens, start_text):
         y = model.generate(
             x,
             max_new_tokens=max_new_tokens,
-            temperature=config['inference']['temperature'],
-            top_p=config['inference']['top_p']
+            temperature=i_cfg.get('temperature', 1.0),
+            top_p=i_cfg.get('top_p', 1.0)
         )
         output_text = decode(y[0].tolist())
 
