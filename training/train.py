@@ -25,11 +25,16 @@ def run_training(config: Dict[str, Any]) -> None:
     Args:
         config: A dictionary containing the training configuration.
     """
+    # Support both flat and nested configuration formats
+    data_cfg = config.get('data', config)
+    model_cfg = config.get('model', config)
+    train_cfg = config.get('training', config)
+
     # Initialize the data manager
     data_manager = DataManager(
-        data_path=config['data']['path'],
-        block_size=config['model']['block_size'],
-        batch_size=config['training']['batch_size'],
+        data_path=data_cfg['path'],
+        block_size=model_cfg['block_size'],
+        batch_size=train_cfg['batch_size'],
         device='cuda' if torch.cuda.is_available() else 'cpu'
     )
 
@@ -62,8 +67,16 @@ def main() -> None:
         return
 
     # Provide sensible defaults for standalone execution.
-    config.setdefault('training', {}).setdefault('output_dir', 'training/checkpoints')
-    config.setdefault('data', {}).setdefault('path', 'dataset/processed/train.txt')
+    # We only add nested keys if the config already uses them, otherwise we stay flat.
+    if 'training' in config:
+        config['training'].setdefault('output_dir', 'training/checkpoints')
+    else:
+        config.setdefault('output_dir', 'training/checkpoints')
+
+    if 'data' in config:
+        config['data'].setdefault('path', 'dataset/processed/train.txt')
+    else:
+        config.setdefault('path', 'dataset/processed/train.txt')
 
     run_training(config)
 

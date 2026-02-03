@@ -15,21 +15,25 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     # Use a dummy vocab_size for benchmark purposes
     vocab_size = 512
 
+    # Support both flat and nested configuration formats
+    model_cfg = config_data.get('model', config_data)
+    train_cfg = config_data.get('training', config_data)
+
     config = GPTConfig(
         vocab_size=vocab_size,
-        block_size=config_data['block_size'],
-        n_layer=config_data['n_layer'],
-        n_head=config_data['n_head'],
-        n_embd=config_data['n_embd'],
-        dropout=config_data['dropout']
+        block_size=model_cfg['block_size'],
+        n_layer=model_cfg['n_layer'],
+        n_head=model_cfg['n_head'],
+        n_embd=model_cfg['n_embd'],
+        dropout=model_cfg['dropout']
     )
 
     model = GPT(config)
     model.eval() # Set to eval mode to disable dropout for benchmark
 
     # Generate dummy data
-    batch_size = config_data['batch_size']
-    block_size = config_data['block_size']
+    batch_size = train_cfg['batch_size']
+    block_size = model_cfg['block_size']
     dummy_input = torch.randint(0, vocab_size, (batch_size, block_size))
     dummy_target = torch.randint(0, vocab_size, (batch_size, block_size))
 

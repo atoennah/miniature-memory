@@ -62,6 +62,7 @@ class Trainer:
             data_manager: The data manager instance.
         """
         self.config = config
+        self._validate_and_cast_config()
         self.data_manager = data_manager
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         print(f"Using device: {self.device}")
@@ -70,16 +71,42 @@ class Trainer:
         self.model = self._build_model()
         self.optimizer = self._build_optimizer()
 
+    def _validate_and_cast_config(self):
+        """Ensures that numeric configuration values are of the correct type."""
+        # Support both flat and nested configuration formats
+        t_cfg = self.config.get('training', self.config)
+
+        # Unify max_iters and max_steps
+        if 'max_iters' in t_cfg and 'max_steps' not in t_cfg:
+            t_cfg['max_steps'] = t_cfg['max_iters']
+
+        float_params = ['learning_rate', 'weight_decay', 'beta1', 'beta2', 'min_lr']
+        int_params = ['batch_size', 'max_steps', 'warmup_iters', 'lr_decay_iters', 'eval_interval']
+
+        for p in float_params:
+            if p in t_cfg:
+                t_cfg[p] = float(t_cfg[p])
+            elif p in self.config:
+                self.config[p] = float(self.config[p])
+
+        for p in int_params:
+            if p in t_cfg:
+                t_cfg[p] = int(t_cfg[p])
+            elif p in self.config:
+                self.config[p] = int(self.config[p])
+
     def _build_model(self) -> nn.Module:
         """Builds the GPT model based on the configuration."""
-        model_config = self.config['model']
+        # Support both flat and nested configuration formats
+        m_cfg = self.config.get('model', self.config)
+
         gpt_config = GPTConfig(
             vocab_size=self.data_manager.vocab_size,
-            block_size=model_config['block_size'],
-            n_layer=model_config['n_layer'],
-            n_head=model_config['n_head'],
-            n_embd=model_config['n_embd'],
-            dropout=model_config['dropout']
+            block_size=m_cfg['block_size'],
+            n_layer=m_cfg['n_layer'],
+            n_head=m_cfg['n_head'],
+            n_embd=m_cfg['n_embd'],
+            dropout=m_cfg['dropout']
         )
         return GPT(gpt_config).to(self.device)
 
@@ -113,21 +140,28 @@ class Trainer:
                 elif pn.endswith('weight') and isinstance(m, blacklist_weight_modules):
                     no_decay.add(fpn)
 
-        # Sanity checks to ensure every parameter is in one of the sets
+        # Sanity checks and filtering to handle tied weights (e.g., lm_head.weight tied to wte.weight)
         param_dict = {pn: p for pn, p in self.model.named_parameters()}
+
+        # Filter decay/no_decay sets to only include parameters actually present in named_parameters()
+        # This handles tied weights where multiple names might point to the same parameter tensor.
+        decay = {pn for pn in decay if pn in param_dict}
+        no_decay = {pn for pn in no_decay if pn in param_dict}
+
         inter_params = decay & no_decay
         union_params = decay | no_decay
         assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
-        assert len(param_dict.keys() - union_params) == 0, "Parameters not in decay/no_decay sets"
+        assert len(param_dict.keys() - union_params) == 0, f"Parameters not in decay/no_decay sets: {param_dict.keys() - union_params}"
 
+        t_cfg = self.config.get('training', self.config)
         optim_groups = [
-            {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": self.config['training']['weight_decay']},
+            {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": t_cfg['weight_decay']},
             {"params": [param_dict[pn] for pn in sorted(list(no_decay))], "weight_decay": 0.0},
         ]
 
-        learning_rate = self.config['training']['learning_rate']
-        beta1 = self.config['training']['beta1']
-        beta2 = self.config['training']['beta2']
+        learning_rate = t_cfg['learning_rate']
+        beta1 = t_cfg['beta1']
+        beta2 = t_cfg['beta2']
         optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=(beta1, beta2))
 
         return optimizer
@@ -141,10 +175,11 @@ class Trainer:
         Returns:
             float: The calculated learning rate.
         """
-        learning_rate = self.config['training']['learning_rate']
-        min_lr = self.config['training']['min_lr']
-        warmup_iters = self.config['training']['warmup_iters']
-        lr_decay_iters = self.config['training']['lr_decay_iters']
+        t_cfg = self.config.get('training', self.config)
+        learning_rate = t_cfg['learning_rate']
+        min_lr = t_cfg['min_lr']
+        warmup_iters = t_cfg['warmup_iters']
+        lr_decay_iters = t_cfg['lr_decay_iters']
 
         if it < warmup_iters:
             return learning_rate * it / warmup_iters
@@ -179,7 +214,8 @@ class Trainer:
         Returns:
             The loss tensor for the current step.
         """
-        grad_clip = self.config['training'].get('grad_clip', 1.0)
+        t_cfg = self.config.get('training', self.config)
+        grad_clip = t_cfg.get('grad_clip', 1.0)
         xb, yb = self.data_manager.get_batch()
 
         with torch.amp.autocast(device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')):
@@ -205,7 +241,8 @@ class Trainer:
             loss: The loss tensor for the current step.
             lr: The learning rate for the current step.
         """
-        max_steps = self.config['training']['max_steps']
+        t_cfg = self.config.get('training', self.config)
+        max_steps = t_cfg['max_steps']
         if lr is not None:
             print(f"Step {step:4d}/{max_steps}: Loss: {loss.item():.4f}, LR: {lr:.6f}")
         else:
@@ -219,9 +256,10 @@ class Trainer:
         """
         print("\nStarting training...")
         start_time = time.time()
-        max_steps = self.config['training']['max_steps']
-        eval_interval = self.config['training']['eval_interval']
-        decay_lr = self.config['training'].get('decay_lr', False)
+        t_cfg = self.config.get('training', self.config)
+        max_steps = t_cfg['max_steps']
+        eval_interval = t_cfg['eval_interval']
+        decay_lr = t_cfg.get('decay_lr', False)
 
         scaler = torch.cuda.amp.GradScaler(enabled=(self.device == 'cuda'))
 
@@ -239,7 +277,8 @@ class Trainer:
 
     def _save_checkpoint(self) -> None:
         """Saves the model's state dictionary to a checkpoint file."""
-        output_dir = self.config['training']['output_dir']
+        t_cfg = self.config.get('training', self.config)
+        output_dir = t_cfg.get('output_dir', 'out')
         os.makedirs(output_dir, exist_ok=True)
         checkpoint_path = os.path.join(output_dir, 'model.pt')
         torch.save(self.model.state_dict(), checkpoint_path)

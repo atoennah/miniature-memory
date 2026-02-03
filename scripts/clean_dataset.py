@@ -8,11 +8,14 @@ ALLOWED_CHARS = re.compile(r'[^a-zA-Z0-9\s.,?!\'"()-]')
 REPEATED_WHITESPACE = re.compile(r'[ \t]+')
 REPEATED_NEWLINES = re.compile(r'\n{3,}')
 
-# Blacklist for common Indonesian gambling ad keywords.
+# Blacklist for common noise and ads.
 # These are case-insensitive.
-GAMBLING_AD_KEYWORDS = [
+NOISE_KEYWORDS = [
     "slot gacor", "judi online", "daftar segera", "bonus new member",
-    "zeus", "pragmatic play", "agen bola", "togel"
+    "zeus", "pragmatic play", "agen bola", "togel",
+    "write stories", "whatever story you want to tell", "reader waiting for you on wattpad",
+    "read socially", "inline commenting", "get updates", "real-time notifications",
+    "favorite stories unfold"
 ]
 
 def clean_content(content):
@@ -26,13 +29,13 @@ def clean_content(content):
     Returns:
         str: The cleaned text content, or an empty string if all content is filtered.
     """
-    # --- "Slot Gacor" Filter ---
-    # Split the content into paragraphs and filter out those containing ads.
+    # --- Noise Filter ---
+    # Split the content into paragraphs and filter out those containing ads or noise.
     paragraphs = content.split('\n')
     cleaned_paragraphs = []
     for p in paragraphs:
         # Check if any blacklisted keyword appears in the paragraph (case-insensitive)
-        if not any(keyword in p.lower() for keyword in GAMBLING_AD_KEYWORDS):
+        if not any(keyword in p.lower() for keyword in NOISE_KEYWORDS):
             cleaned_paragraphs.append(p)
 
     # Re-join the content after filtering
@@ -84,6 +87,9 @@ def run_cleaning(raw_dir, cleaned_dir):
                         cleaned_count += 1
                     else:
                         print(f"[⚠️ SKIPPED] {relative_path} (empty after cleaning)")
+                        # Remove existing cleaned file if it exists to avoid stale data
+                        if os.path.exists(cleaned_filepath):
+                            os.remove(cleaned_filepath)
                         skipped_count += 1
 
                 except Exception as e:
