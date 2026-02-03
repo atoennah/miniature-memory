@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import os
 from typing import Tuple, Callable, List, Dict
 
 class DataManager:
@@ -45,6 +46,9 @@ class DataManager:
         total_size = 0
         chunk_size = 10 * 1024 * 1024  # 10MB chunks for vocab building
 
+        if not os.path.exists(data_path):
+            raise FileNotFoundError(f"Data file not found at {data_path}")
+
         with open(data_path, 'r', encoding='utf-8') as f:
             while True:
                 chunk = f.read(chunk_size)
@@ -66,22 +70,30 @@ class DataManager:
         tokenized_data_path = data_path + ".bin"
         dtype = np.uint16  # Assuming vocab_size < 65535
 
-        # Create the memory-mapped file with the correct total size
-        mm = np.memmap(tokenized_data_path, dtype=dtype, mode='w+', shape=(total_size,))
+        # Bolt Optimization: Skip re-tokenization if the bin file is already present and matches expected size
+        expected_size = total_size * np.dtype(dtype).itemsize
+        if os.path.exists(tokenized_data_path) and os.path.getsize(tokenized_data_path) == expected_size:
+            print(f"⚡ Bolt: Utilizing existing tokenized artifact: {tokenized_data_path}")
+        else:
+            print(f"⚡ Bolt: Tokenizing dataset into {tokenized_data_path}...")
+            # Create the memory-mapped file with the correct total size
+            mm = np.memmap(tokenized_data_path, dtype=dtype, mode='w+', shape=(total_size,))
 
-        # Process the file again, this time tokenizing and writing to the memmap
-        processed_size = 0
-        with open(data_path, 'r', encoding='utf-8') as f:
-            while True:
-                chunk = f.read(chunk_size)
-                if not chunk:
-                    break
-                encoded_chunk = self.encode(chunk)
-                mm[processed_size:processed_size + len(encoded_chunk)] = encoded_chunk
-                processed_size += len(encoded_chunk)
+            # Process the file again, this time tokenizing and writing to the memmap
+            processed_size = 0
+            with open(data_path, 'r', encoding='utf-8') as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    encoded_chunk = self.encode(chunk)
+                    mm[processed_size:processed_size + len(encoded_chunk)] = encoded_chunk
+                    processed_size += len(encoded_chunk)
 
-        # Flush changes to disk and set the data attribute for reading
-        mm.flush()
+            # Flush changes to disk
+            mm.flush()
+
+        # Set the data attribute for reading
         self.data = np.memmap(tokenized_data_path, dtype=dtype, mode='r', shape=(total_size,))
 
     def get_batch(self) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -98,11 +110,12 @@ class DataManager:
         # Generate random starting indices for each batch
         ix = torch.randint(len(self.data) - self.block_size, (self.batch_size,))
 
-        # Create input and target sequences by reading from the memmap array
-        # and converting to torch tensors
-        x = torch.stack([torch.from_numpy(self.data[i:i+self.block_size].astype(np.int64)) for i in ix])
-        y = torch.stack([torch.from_numpy(self.data[i+1:i+self.block_size+1].astype(np.int64)) for i in ix])
+        # Bolt Optimization: Vectorized extraction from memmap via NumPy stacking
+        # This is more efficient than looping over torch.from_numpy calls
+        x_np = np.stack([self.data[i:i+self.block_size] for i in ix])
+        y_np = np.stack([self.data[i+1:i+self.block_size+1] for i in ix])
 
-        # Move tensors to the specified device
-        x, y = x.to(self.device), y.to(self.device)
+        x = torch.from_numpy(x_np.astype(np.int64)).to(self.device)
+        y = torch.from_numpy(y_np.astype(np.int64)).to(self.device)
+
         return x, y

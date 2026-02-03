@@ -118,6 +118,10 @@ class Trainer:
         inter_params = decay & no_decay
         union_params = decay | no_decay
         assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
+        # Bolt Fix: Filter for tied weights compatibility
+        decay = {pn for pn in decay if pn in param_dict}
+        no_decay = {pn for pn in no_decay if pn in param_dict}
+
         assert len(param_dict.keys() - union_params) == 0, "Parameters not in decay/no_decay sets"
 
         optim_groups = [
@@ -183,7 +187,7 @@ class Trainer:
         xb, yb = self.data_manager.get_batch()
 
         with torch.amp.autocast(device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')):
-            _, loss = self.model(xb, yb)
+            _, loss, _ = self.model(xb, yb)
 
         self.optimizer.zero_grad(set_to_none=True)
         scaler.scale(loss).backward()
