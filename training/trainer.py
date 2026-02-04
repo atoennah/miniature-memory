@@ -115,10 +115,16 @@ class Trainer:
 
         # Sanity checks to ensure every parameter is in one of the sets
         param_dict = {pn: p for pn, p in self.model.named_parameters()}
+
+        # Filter decay/no_decay to only include parameters that actually exist in param_dict
+        # This handles weight tying where multiple module parameters point to the same tensor
+        decay = {pn for pn in decay if pn in param_dict}
+        no_decay = {pn for pn in no_decay if pn in param_dict}
+
         inter_params = decay & no_decay
         union_params = decay | no_decay
         assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
-        assert len(param_dict.keys() - union_params) == 0, "Parameters not in decay/no_decay sets"
+        assert len(param_dict.keys() - union_params) == 0, f"Parameters not in decay/no_decay sets: {param_dict.keys() - union_params}"
 
         optim_groups = [
             {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": self.config['training']['weight_decay']},
@@ -183,7 +189,7 @@ class Trainer:
         xb, yb = self.data_manager.get_batch()
 
         with torch.amp.autocast(device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')):
-            _, loss = self.model(xb, yb)
+            _, loss, _ = self.model(xb, yb)
 
         self.optimizer.zero_grad(set_to_none=True)
         scaler.scale(loss).backward()

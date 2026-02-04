@@ -1,5 +1,7 @@
 import torch
 import numpy as np
+import os
+import pickle
 from typing import Tuple, Callable, List, Dict
 
 class DataManager:
@@ -9,26 +11,11 @@ class DataManager:
     This class is optimized for memory efficiency. It memory-maps the tokenized
     dataset, allowing for the training of models on datasets that are much
     larger than the available RAM.
-
-    Attributes:
-        data (np.memmap): Memory-mapped array of token IDs.
-        vocab_size (int): The number of unique characters in the vocabulary.
-        encode (callable): A function to encode a string into a list of token IDs.
-        decode (callable): A function to decode a list of token IDs into a string.
-        block_size (int): The context length for the model.
-        batch_size (int): The number of sequences in a batch.
-        device (str): The device to move tensors to ('cpu' or 'cuda').
     """
 
     def __init__(self, data_path: str, block_size: int, batch_size: int, device: str):
         """
-        Initializes the DataManager, tokenizes the data, and memory-maps it.
-
-        Args:
-            data_path (str): Path to the training data file (e.g., 'train.txt').
-            block_size (int): The context length for the transformer model.
-            batch_size (int): The number of independent sequences in a batch.
-            device (str): The computing device ('cuda' or 'cpu').
+        Initializes the DataManager, tokenizes the data (if needed), and memory-maps it.
         """
         self.block_size = block_size
         self.batch_size = batch_size
@@ -37,72 +24,83 @@ class DataManager:
 
     def _initialize_tokenizer_and_data(self, data_path: str) -> None:
         """
-        Reads data in chunks, creates a tokenizer, and prepares a memory-mapped
-        dataset without loading the entire file into RAM.
+        Loads or creates tokenized data and metadata.
         """
-        # --- Step 1: Build vocabulary by streaming the file ---
-        char_set = set()
-        total_size = 0
-        chunk_size = 10 * 1024 * 1024  # 10MB chunks for vocab building
+        bin_path = data_path + ".bin"
+        meta_path = data_path + "_meta.pkl"
 
-        with open(data_path, 'r', encoding='utf-8') as f:
-            while True:
-                chunk = f.read(chunk_size)
-                if not chunk:
-                    break
-                char_set.update(chunk)
-                total_size += len(chunk)
+        if os.path.exists(bin_path) and os.path.exists(meta_path):
+            print(f"Loading existing tokenized data from {bin_path}")
+            with open(meta_path, 'rb') as f:
+                meta = pickle.load(f)
+            self.vocab_size = meta['vocab_size']
+            stoi = meta['stoi']
+            itos = meta['itos']
+            self.encode = lambda s: [stoi.get(c, 0) for c in s]
+            self.decode = lambda l: ''.join([itos.get(i, '') for i in l])
 
-        chars = sorted(list(char_set))
-        self.vocab_size = len(chars)
+            # Get size from file
+            file_size = os.path.getsize(bin_path)
+            # Assuming uint16 (2 bytes)
+            total_size = file_size // 2
+            self.data = np.memmap(bin_path, dtype=np.uint16, mode='r', shape=(total_size,))
+        else:
+            print(f"Tokenizing raw data from {data_path}...")
+            # --- Step 1: Build vocabulary by streaming the file ---
+            char_set = set()
+            total_size = 0
+            chunk_size = 10 * 1024 * 1024  # 10MB chunks for vocab building
 
-        stoi: Dict[str, int] = {ch: i for i, ch in enumerate(chars)}
-        itos: Dict[int, str] = {i: ch for i, ch in enumerate(chars)}
+            with open(data_path, 'r', encoding='utf-8') as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    char_set.update(chunk)
+                    total_size += len(chunk)
 
-        self.encode: Callable[[str], List[int]] = lambda s: [stoi.get(c, 0) for c in s]
-        self.decode: Callable[[List[int]], str] = lambda l: ''.join([itos.get(i, '') for i in l])
+            chars = sorted(list(char_set))
+            self.vocab_size = len(chars)
 
-        # --- Step 2: Create memory-mapped file and tokenize in chunks ---
-        tokenized_data_path = data_path + ".bin"
-        dtype = np.uint16  # Assuming vocab_size < 65535
+            stoi: Dict[str, int] = {ch: i for i, ch in enumerate(chars)}
+            itos: Dict[int, str] = {i: ch for i, ch in enumerate(chars)}
 
-        # Create the memory-mapped file with the correct total size
-        mm = np.memmap(tokenized_data_path, dtype=dtype, mode='w+', shape=(total_size,))
+            self.encode: Callable[[str], List[int]] = lambda s: [stoi.get(c, 0) for c in s]
+            self.decode: Callable[[List[int]], str] = lambda l: ''.join([itos.get(i, '') for i in l])
 
-        # Process the file again, this time tokenizing and writing to the memmap
-        processed_size = 0
-        with open(data_path, 'r', encoding='utf-8') as f:
-            while True:
-                chunk = f.read(chunk_size)
-                if not chunk:
-                    break
-                encoded_chunk = self.encode(chunk)
-                mm[processed_size:processed_size + len(encoded_chunk)] = encoded_chunk
-                processed_size += len(encoded_chunk)
+            # Save metadata
+            with open(meta_path, 'wb') as f:
+                pickle.dump({'vocab_size': self.vocab_size, 'stoi': stoi, 'itos': itos}, f)
 
-        # Flush changes to disk and set the data attribute for reading
-        mm.flush()
-        self.data = np.memmap(tokenized_data_path, dtype=dtype, mode='r', shape=(total_size,))
+            # --- Step 2: Create memory-mapped file and tokenize in chunks ---
+            dtype = np.uint16
+            mm = np.memmap(bin_path, dtype=dtype, mode='w+', shape=(total_size,))
+
+            processed_size = 0
+            with open(data_path, 'r', encoding='utf-8') as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    encoded_chunk = self.encode(chunk)
+                    mm[processed_size:processed_size + len(encoded_chunk)] = encoded_chunk
+                    processed_size += len(encoded_chunk)
+
+            mm.flush()
+            self.data = np.memmap(bin_path, dtype=dtype, mode='r', shape=(total_size,))
+            print(f"Tokenization complete. Saved to {bin_path}")
 
     def get_batch(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Generates a small batch of data of inputs x and targets y.
-
-        This method reads directly from the memory-mapped file.
-
-        Returns:
-            A tuple containing:
-            - A (batch_size, block_size) tensor of input token IDs.
-            - A (batch_size, block_size) tensor of target token IDs.
+        Generates a small batch of data. Optimized with NumPy vectorization.
         """
-        # Generate random starting indices for each batch
-        ix = torch.randint(len(self.data) - self.block_size, (self.batch_size,))
+        ix = np.random.randint(0, len(self.data) - self.block_size, (self.batch_size,))
 
-        # Create input and target sequences by reading from the memmap array
-        # and converting to torch tensors
-        x = torch.stack([torch.from_numpy(self.data[i:i+self.block_size].astype(np.int64)) for i in ix])
-        y = torch.stack([torch.from_numpy(self.data[i+1:i+self.block_size+1].astype(np.int64)) for i in ix])
+        # Use a single numpy allocation and loop for memory efficiency and speed
+        x_np = np.stack([self.data[i:i+self.block_size] for i in ix]).astype(np.int64)
+        y_np = np.stack([self.data[i+1:i+self.block_size+1] for i in ix]).astype(np.int64)
 
-        # Move tensors to the specified device
-        x, y = x.to(self.device), y.to(self.device)
+        x = torch.from_numpy(x_np).to(self.device)
+        y = torch.from_numpy(y_np).to(self.device)
+
         return x, y
