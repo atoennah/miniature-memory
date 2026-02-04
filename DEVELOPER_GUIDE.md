@@ -22,7 +22,7 @@ Understanding the repository layout is key to contributing effectively.
 
 ```
 .
-├── .jules/             # Agent-specific instructions and memory
+├── .jules/             # Agent-specific instructions, memory, and roadmap
 ├── dataset/
 │   ├── raw/            # Append-only, immutable raw text files
 │   ├── cleaned/        # Script-generated cleaned text
@@ -33,9 +33,12 @@ Understanding the repository layout is key to contributing effectively.
 ├── training/           # Model definition, training loop, and configs
 ├── .gitignore          # Specifies intentionally untracked files
 ├── CONTRIBUTING.md     # The locked, non-negotiable project intent
+├── DATA_FORMAT.md      # Detailed specifications for all data stages
 ├── DEVELOPER_GUIDE.md  # This file
 ├── README.md           # High-level project overview
-└── ROADMAP.md          # Long-term project goals
+├── benchmark.py        # Performance measurement suite
+├── run.py              # Main orchestrator for the full pipeline
+└── setup.sh            # Environment initialization script
 ```
 
 ## 3. The Data Pipeline
