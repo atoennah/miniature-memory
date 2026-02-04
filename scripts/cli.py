@@ -1,4 +1,11 @@
 import argparse
+import os
+import sys
+
+# [INJECTOR NOTE]: Add project root to the Python path to resolve
+# internal packages (scraper, training) when executed from root.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from scraper.commands.search import run_search
 from scraper.commands.process import run_process
 

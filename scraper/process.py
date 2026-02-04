@@ -1,3 +1,20 @@
+# [INJECTOR: THE STEALTH STRATEGY & CONTENT DISTILLATION]
+#
+# Scraping modern web pages is no longer a matter of simple `requests.get()`.
+# Pages are dynamic, protected by anti-bot measures, and cluttered with
+# non-content boilerplate.
+#
+# This module employs a dual-pronged strategy:
+# 1.  STEALTH BROWSER EMULATION: We use Playwright to launch a headless Chromium
+#     instance. This allows us to execute JavaScript, handle cookies, and
+#     bypass basic fingerprinting. By waiting for `networkidle`, we ensure
+#     that asynchronous content (like the actual story text) is fully rendered.
+#
+# 2.  CONTENT DISTILLATION: Instead of brittle CSS selectors, we use Trafilatura.
+#     Trafilatura uses a combination of algorithms (density-based, pattern
+#     recognition) to strip away the "noise" (ads, footers, sidebars) and
+#     extract the core "signal" (the story).
+
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 import trafilatura
@@ -17,9 +34,12 @@ def fetch_html(url: str) -> str | None:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
-            # Set a longer timeout (60 seconds) for pages that are slow to load
+            # [INJECTOR NOTE]: 60s timeout accounts for high-latency sites or
+            # slow JS execution.
             page.goto(url, timeout=60000)
-            # Wait for the network to be idle, indicating the page has likely loaded
+            # [INJECTOR NOTE]: 'networkidle' is the gold standard for dynamic
+            # pages. It waits until there are no more than 0 network
+            # connections for at least 500ms.
             page.wait_for_load_state('networkidle')
             html = page.content()
             browser.close()
@@ -43,6 +63,8 @@ def extract_text(html: str) -> str:
     if not html:
         return ""
 
-    # Trafilatura is a library specifically designed to extract the main
-    # text content from a webpage, filtering out menus, ads, and footers.
+    # [INJECTOR NOTE]: Trafilatura is preferred here because it maintains
+    # better structural integrity of the text (e.g., preserving paragraphs)
+    # compared to raw BeautifulSoup text extraction, which often results
+    # in "collapsed" text blocks.
     return trafilatura.extract(html)
