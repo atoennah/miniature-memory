@@ -15,20 +15,24 @@ training:
   eval_iters: 200
   always_save_checkpoint: False
   # Optimizer params
-  learning_rate: 1.0e-3
+  learning_rate: 5.0e-4 # Reduced for stability [Bolt]
   weight_decay: 1.0e-1
   beta1: 0.9
-  beta2: 0.99 # Make a bit bigger because number of tokens per iter is small
+  beta2: 0.99
   grad_clip: 1.0
   # Learning rate decay settings
   decay_lr: True
   warmup_iters: 100
   lr_decay_iters: 500
-  min_lr: 1.0e-4
+  min_lr: 5.0e-5 # Scaled with LR
   # Training loop
   batch_size: 32 # Power of 2 for efficiency
   gradient_accumulation_steps: 1
-  max_steps: 500
+  max_steps: 50
+# Inference settings for generate.py
+inference:
+  temperature: 0.8
+  top_p: 0.9
 # W&B logging
 wandb:
   log: False

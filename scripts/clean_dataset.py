@@ -8,12 +8,20 @@ ALLOWED_CHARS = re.compile(r'[^a-zA-Z0-9\s.,?!\'"()-]')
 REPEATED_WHITESPACE = re.compile(r'[ \t]+')
 REPEATED_NEWLINES = re.compile(r'\n{3,}')
 
-# Blacklist for common Indonesian gambling ad keywords.
+# Blacklist for common Indonesian gambling ad keywords and Wattpad boilerplate.
 # These are case-insensitive.
 GAMBLING_AD_KEYWORDS = [
     "slot gacor", "judi online", "daftar segera", "bonus new member",
     "zeus", "pragmatic play", "agen bola", "togel"
 ]
+
+NOISE_KEYWORDS = [
+    "write stories", "whatever story you want to tell", "there is a reader waiting for you on wattpad",
+    "read socially", "inline commenting lets you share thoughts", "get updates",
+    "receive real-time notifications as your favorite stories unfold"
+]
+
+ALL_BLACKLIST = GAMBLING_AD_KEYWORDS + NOISE_KEYWORDS
 
 def clean_content(content):
     """
@@ -32,7 +40,7 @@ def clean_content(content):
     cleaned_paragraphs = []
     for p in paragraphs:
         # Check if any blacklisted keyword appears in the paragraph (case-insensitive)
-        if not any(keyword in p.lower() for keyword in GAMBLING_AD_KEYWORDS):
+        if not any(keyword in p.lower() for keyword in ALL_BLACKLIST):
             cleaned_paragraphs.append(p)
 
     # Re-join the content after filtering
@@ -83,6 +91,9 @@ def run_cleaning(raw_dir, cleaned_dir):
                         print(f"[✅ CLEANED] {relative_path}")
                         cleaned_count += 1
                     else:
+                        # If the file exists but is now empty after cleaning, remove it
+                        if os.path.exists(cleaned_filepath):
+                            os.remove(cleaned_filepath)
                         print(f"[⚠️ SKIPPED] {relative_path} (empty after cleaning)")
                         skipped_count += 1
 
