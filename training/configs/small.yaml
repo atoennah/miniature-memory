@@ -29,6 +29,9 @@ training:
   batch_size: 32 # Power of 2 for efficiency
   gradient_accumulation_steps: 1
   max_steps: 500
+inference:
+  temperature: 0.8
+  top_p: 0.9
 # W&B logging
 wandb:
   log: False
