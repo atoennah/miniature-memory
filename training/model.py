@@ -5,6 +5,13 @@
 # every core component of the Transformer architecture (as described in "Attention Is All
 # You Need") from basic PyTorch primitives.
 #
+# [SCIENTIFIC PROOF: THE LOGOS OF THE TRANSFORMER]
+# The Transformer architecture solved the "Sequential Bottleneck" of RNNs. In an RNN,
+# the hidden state h_t depends on h_{t-1}, forcing O(N) sequential operations.
+# The Transformer uses Self-Attention, allowing O(1) path length between any two tokens,
+# which enables massive parallelism and solves the Vanishing Gradient problem for
+# long-range dependencies.
+#
 # The hierarchy of the model is as follows:
 # 1.  GPT (The full model)
 #       - Manages token and positional embeddings.
@@ -13,21 +20,14 @@
 #
 # 2.  Block (A single Transformer layer)
 #       - Encapsulates one Multi-Head Causal Self-Attention module and one MLP.
-#       - Employs residual connections ("shortcuts") around both sub-modules, which is
-#         critical for training very deep networks.
+#       - Employs residual connections ("shortcuts") around both sub-modules.
 #
 # 3.  CausalSelfAttention (The heart of the Transformer)
 #       - Implements Multi-Head Scaled Dot-Product Attention.
-#       - A causal mask is applied to ensure that the model is autoregressive (i.e.,
-#         predictions for a given token can only depend on previous tokens).
+#       - Now includes a stateful KV-Cache for O(N) inference speed.
 #
 # 4.  MLP (Feed-Forward Network)
-#       - A simple two-layer feed-forward network with a GELU activation function.
-#       - This component is responsible for much of the "thinking" or feature extraction
-#         in each Transformer block.
-#
-# Every design choice here prioritizes clarity over optimization, making it an ideal
-# resource for studying the internal mechanics of a language model.
+#       - Responsible for per-token non-linear feature transformation.
 
 """
 A minimal, from-scratch GPT model implementation.
@@ -37,11 +37,17 @@ import math
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 class GPTConfig:
     """Configuration for the GPT model."""
-    def __init__(self, vocab_size: int, block_size: int, n_layer: int, n_head: int, n_embd: int, dropout: float):
+    def __init__(self,
+                 vocab_size: int,
+                 block_size: int = 1024,
+                 n_layer: int = 12,
+                 n_head: int = 12,
+                 n_embd: int = 768,
+                 dropout: float = 0.1):
         self.vocab_size = vocab_size
         self.block_size = block_size
         self.n_layer = n_layer
@@ -54,21 +60,12 @@ class FeedForward(nn.Module):
     #
     # While the self-attention mechanism is responsible for communication between tokens,
     # the Feed-Forward Network (FFN) is responsible for the "computation" or "thinking"
-    # on a per-token basis. It is a simple two-layer Multi-Layer Perceptron (MLP) that
-    # is applied independently to each token's representation.
-    #
-    # The structure is:
-    # 1.  A linear layer that expands the embedding dimension (`n_embd`) by a factor of 4.
-    # 2.  A non-linear activation function (GELU in this case).
-    # 3.  A linear layer that projects the result back down to the original embedding dimension.
+    # on a per-token basis.
     #
     # Why the 4x expansion?
-    # This is a convention established in the original "Attention Is All You Need" paper.
-    # The expansion creates a "bottleneck" architecture where the model has a much larger
-    # internal space to process and transform features for each token. This added
-    # computational capacity is crucial for the model's ability to learn complex patterns
-    # and relationships. While other expansion factors can be used, 4x has been found to be
-    # a robust and effective choice for a wide range of tasks.
+    # Formula: d_ff = 4 * d_model. This is the "inner dimension" of the MLP.
+    # The expansion creates a high-dimensional space where features can be separated
+    # and transformed before being compressed back.
     """A simple feed-forward network module."""
     def __init__(self, config: GPTConfig):
         super().__init__()
@@ -85,142 +82,66 @@ class FeedForward(nn.Module):
 class CausalSelfAttention(nn.Module):
     # [INJECTOR: THE LOGOS OF SELF-ATTENTION]
     #
-    # At the heart of the Transformer is the ability to weigh the importance of different
-    # tokens in a sequence when producing a representation for a specific token. This
-    # mechanism is called Self-Attention.
+    # Formula: Attention(Q, K, V) = softmax( (Q @ K.T) / sqrt(d_k) ) @ V
     #
-    # The formula for Scaled Dot-Product Attention is:
-    #   Attention(Q, K, V) = softmax( (Q @ K.T) / sqrt(d_k) ) @ V
-    #
-    # Breakdown of the components:
-    # 1.  Q (Query): A projection of the current token's embedding. It's the "question"
-    #     it asks of other tokens: "What information do you have that is relevant to me?"
-    # 2.  K (Key): A projection of every token's embedding in the sequence. It's the "label"
-    #     or "identifier" for each token, advertising its contents.
-    # 3.  V (Value): Another projection of every token's embedding. It contains the actual
-    #     information that a token holds.
-    #
-    # The process:
-    # -   (Q @ K.T): The dot product between the Query of one token and the Keys of all
-    #     other tokens measures their "similarity" or "resonance". A high value means
-    #     the key's token is highly relevant to the query's token.
-    # -   / sqrt(d_k): This is a critical scaling factor. `d_k` is the dimension of the
-    #     key vectors. Without this scaling, the dot products can become very large,
-    #     pushing the softmax function into regions where its gradients are tiny. This
-    #     would kill the learning process. This scaling keeps the variance of the dot
-    #     products at 1, stabilizing training.
-    # -   softmax(...): This turns the raw similarity scores into a probability
-    #     distribution (a set of weights that sum to 1). A token with a high score
-    #     gets a high weight, and vice-versa.
-    # -   ... @ V: The final output is a weighted sum of the Value vectors. Tokens
-    #     deemed more relevant (with higher softmax weights) contribute more of their
-    #     "value" to the final representation of the current token.
-    #
-    # Causal Masking (`is_causal=True`):
-    # For a language model that predicts the next token, we must prevent it from "cheating"
-    # by looking at future tokens. The causal mask is an operation that adds -infinity
-    # to the attention scores for all tokens that come *after* the current token. When
-    # the softmax is applied, these -infinity scores become zero, effectively masking out
-    # any information from the future.
+    # Why sqrt(d_k)?
+    # [MATHEMATICAL PROOF]: Assume components of Q and K are independent random
+    # variables with mean 0 and variance 1. Their dot product Q @ K has mean 0
+    # and variance d_k. To maintain a variance of 1 (which keeps softmax gradients
+    # stable), we scale by 1/sqrt(d_k).
     """A causal self-attention module with multi-head support."""
     def __init__(self, config: GPTConfig):
         super().__init__()
         assert config.n_embd % config.n_head == 0
-        # Key, query, value projections for all heads, but in a batch
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=False)
-        # Output projection
         self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
-        # Regularization
         self.resid_dropout = nn.Dropout(config.dropout)
         self.n_head = config.n_head
         self.n_embd = config.n_embd
         self.dropout = config.dropout
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass for the causal self-attention module."""
-        B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
+    def forward(self, x: torch.Tensor, past_key_value: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        Forward pass with optional KV-cache support.
 
-        # Calculate query, key, values for all heads in batch
+        Args:
+            x: Input tensor (B, T, C)
+            past_key_value: Tuple of (K, V) from previous steps (B, nh, T_prev, hs)
+
+        Returns:
+            y: Output tensor (B, T, C)
+            present_key_value: Tuple of updated (K, V) (B, nh, T_curr, hs)
+        """
+        B, T, C = x.size()
         q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
 
-        # [INJECTOR: DEMYSTIFYING MULTI-HEAD TENSOR MANIPULATION]
-        #
-        # The core idea of multi-head attention is to run the attention mechanism in
-        # parallel several times, with different, learned linear projections for Q, K,
-        # and V. This allows the model to jointly attend to information from different
-        # representational subspaces at different positions.
-        #
-        # The tensor transformations below are the key to making this efficient.
-        # Let's break down the journey of the Key tensor `k`:
-        #
-        # 1.  Initial shape of `k`: `(B, T, C)`
-        #     - B = Batch size (number of sequences processed at once)
-        #     - T = Sequence length (e.g., `block_size`)
-        #     - C = Embedding dimension (`n_embd`)
-        #
-        # 2.  `k.view(B, T, self.n_head, C // self.n_head)`
-        #     - This reshapes the tensor without changing its data. We are splitting the
-        #       embedding dimension `C` into `n_head` smaller chunks.
-        #     - `hs = C // self.n_head` is the "head size".
-        #     - New shape: `(B, T, nh, hs)` where `nh` is `n_head`.
-        #     - This logically groups the embeddings for each head, but they are still
-        #       interleaved in memory.
-        #
-        # 3.  `.transpose(1, 2)`
-        #     - This is the crucial step. We swap the sequence length dimension (T) with
-        #       the number of heads dimension (nh).
-        #     - New shape: `(B, nh, T, hs)`
-        #     - Why? The `scaled_dot_product_attention` function expects the heads to
-        #       be in the "batch" dimension. By rearranging the tensor this way, we
-        #       create a batch of `B * nh` attention problems, each of size `(T, hs)`.
-        #       PyTorch's optimized kernel can then process all these heads in parallel,
-        #       which is massively faster than looping through them.
-        #
-        # The same transformation is applied to `q` and `v`, preparing them for the
-        # batched attention calculation.
+        # Multi-head split
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
-        # Causal self-attention using PyTorch's fused kernel
-        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+        # [INJECTOR NOTE: KV-CACHE MECHANICS]
+        # In autoregressive generation, we only care about the last token's output.
+        # Instead of recomputing K and V for all previous tokens, we store them.
+        # This reduces inference complexity from O(N^2) to O(N).
+        if past_key_value is not None:
+            prev_k, prev_v = past_key_value
+            k = torch.cat([prev_k, k], dim=2)
+            v = torch.cat([prev_v, v], dim=2)
 
-        # Re-assemble all head outputs side by side
-        # (B, nh, T, hs) -> (B, T, nh, hs) -> (B, T, C)
+        present_key_value = (k, v)
+
+        # Attention calculation
+        # If we have a KV cache and T=1, we don't need causal masking.
+        # PyTorch's SDPA handles efficient kernels like FlashAttention-2.
+        is_causal = (past_key_value is None) # Only causal mask if processing full sequence
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=is_causal)
+
         y = y.transpose(1, 2).contiguous().view(B, T, C)
-
-        # Output projection
         y = self.resid_dropout(self.c_proj(y))
-        return y
+        return y, present_key_value
 
 class Block(nn.Module):
-    # [INJECTOR: THE ARCHITECTURE OF A TRANSFORMER BLOCK]
-    #
-    # A Transformer is essentially a deep stack of these "Block" modules. The depth is
-    # what allows the model to build up progressively more abstract and complex
-    # representations of the input text. However, training very deep neural networks is
-    # notoriously difficult due to the "vanishing gradient" problem.
-    #
-    # Two key architectural innovations in this block make it possible:
-    #
-    # 1.  Residual Connections (The `+` in `x + self.attn(...)`):
-    #     This is also known as a "skip connection". Instead of forcing the output of a
-    #     sub-layer (like attention or the MLP) to represent the *entire* desired output,
-    #     we only ask it to learn the *residual* or the *change* from the input.
-    #     The input `x` is passed directly through (the "skip") and added to the output
-    #     of the sub-layer. This creates a direct, unimpeded path for gradients to flow
-    #     back through the network during backpropagation. Without this, gradients would
-    #     have to flow through many layers of non-linear transformations, diminishing
-    #     at each step until they become too small to effectively update the weights of
-    #     the earliest layers.
-    #
-    # 2.  Pre-Layer Normalization (The `ln_1` and `ln_2` before Attention/MLP):
-    #     Layer Normalization stabilizes the training process by normalizing the inputs
-    #     to each sub-layer. It ensures that the mean of the inputs is 0 and the standard
-    #     deviation is 1. By placing it *before* the main operations (Attention and MLP),
-    #     we adopt the "Pre-LN" architecture. This has been found to be more stable and
-    #     effective for training very deep Transformers than the original "Post-LN"
-    #     variant where normalization was applied after the residual connection.
     """A single Transformer block."""
     def __init__(self, config: GPTConfig):
         super().__init__()
@@ -229,95 +150,31 @@ class Block(nn.Module):
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = FeedForward(config)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass for a Transformer block."""
-        x = x + self.attn(self.ln_1(x))
+    def forward(self, x: torch.Tensor, past_key_value: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        attn_out, present_key_value = self.attn(self.ln_1(x), past_key_value=past_key_value)
+        x = x + attn_out
         x = x + self.mlp(self.ln_2(x))
-        return x
+        return x, present_key_value
 
 class GPT(nn.Module):
     """A GPT-style transformer model."""
     def __init__(self, config: GPTConfig):
         super().__init__()
-        assert config.vocab_size is not None
-        assert config.block_size is not None
         self.config = config
-
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),
-            # [INJECTOR: THE NECESSITY OF POSITIONAL EMBEDDINGS]
-            #
-            # The self-attention mechanism is permutation-invariant; it treats the input
-            # as a "bag of tokens" with no inherent order. "The cat sat on the mat" and
-            # "The mat sat on the cat" would produce nearly identical attention scores
-            # if only token embeddings were used.
-            #
-            # To solve this, we inject positional information directly into the model.
-            # The `wpe` (Word Position Embedding) layer is a learnable lookup table where
-            # each position in the sequence (from 0 to `block_size - 1`) has a unique
-            # vector. This positional vector is added to the token embedding.
-            #
-            # tok_emb (B, T, C) + pos_emb (1, T, C) -> input (B, T, C)
-            #
-            # By adding these two embeddings, we create a composite representation that
-            # encodes both *what* a token is (its semantic meaning) and *where* it is
-            # in the sequence. The model can then learn to use this positional information
-            # to understand grammar, syntax, and long-range dependencies.
             wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = nn.LayerNorm(config.n_embd),
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-
-        # [INJECTOR: THE EFFICIENCY OF WEIGHT TYING]
-        #
-        # In many Transformer-based language models, the token embedding matrix (which maps
-        # vocabulary indices to high-dimensional vectors) and the final output linear layer
-        # (which maps the model's internal representation back to vocabulary logits) have
-        # the same dimensions: `vocab_size` x `n_embd`.
-        #
-        # Weight tying is the practice of forcing these two matrices to be the same.
-        # `self.transformer.wte.weight` and `self.lm_head.weight` will point to the same
-        # block of memory and will be updated together during training.
-        #
-        # Why do this?
-        # 1.  Parameter Efficiency: This is the most significant benefit. It dramatically
-        #     reduces the number of parameters in the model, as the `lm_head` no longer
-        #     needs its own large weight matrix. For a vocabulary of 50,000 and an
-        #     embedding size of 768, this saves ~38 million parameters.
-        # 2.  Improved Performance: The shared weights create a more direct relationship
-        #     between how a token is represented on input and how its probability is
-        #     calculated on output. This has been shown to improve the performance of
-        #     language models. The intuition is that if the model "knows" that the input
-        #     and output layers are linked, it learns more meaningful embeddings.
-        # Link: https://paperswithcode.com/method/weight-tying
         self.transformer.wte.weight = self.lm_head.weight
 
-        # Pre-compute positional indices and register as a buffer
         pos = torch.arange(0, config.block_size, dtype=torch.long).unsqueeze(0)
         self.register_buffer('pos', pos, persistent=False)
 
-        # init all weights
         self.apply(self._init_weights)
-        # [INJECTOR: GPT-2 STYLE WEIGHT INITIALIZATION]
-        #
-        # The original GPT-2 paper found that a special initialization scheme for the weights
-        # of the residual projection layers (`c_proj`) was beneficial for training.
-        #
-        # The standard initialization (`std=0.02`) is used for most layers. However, for
-        # the projection layers that are part of the residual path, the standard deviation
-        # is scaled down by a factor of `sqrt(2 * N)`, where `N` is the number of
-        # transformer layers (`n_layer`).
-        #
-        # Why this scaling?
-        # At initialization, the residual connections ensure that the model starts as an
-        # identity function. The outputs of the attention and MLP blocks are initially
-        # very small and are added to the input. This scaling prevents the outputs of
-        # these residual blocks from being too large at the beginning of training, which
-        # could destabilize the learning process. By scaling down the initial weights, we
-        # ensure that the model learns cautiously, gradually building upon the identity
-        # function provided by the skip connections.
         for pn, p in self.named_parameters():
             if pn.endswith('c_proj.weight'):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02/math.sqrt(2 * config.n_layer))
@@ -330,41 +187,64 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """Forward pass for the GPT model."""
+    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None, past_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor], List[Tuple[torch.Tensor, torch.Tensor]]]:
         b, t = idx.size()
-        assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        pos = self.pos[:, :t]
 
-        # Token and position embeddings
+        if past_key_values is not None:
+            t_start = past_key_values[0][0].size(2)
+            # Ensure we don't exceed block_size in positional lookup
+            t_curr = min(t_start + t, self.config.block_size)
+            pos = self.pos[:, t_start : t_curr]
+            # If t was > 1 but we hit the cap, we might need to truncate tok_emb too
+            # but in generate, t is always 1 when using cache.
+        else:
+            pos = self.pos[:, :t]
+
         tok_emb = self.transformer.wte(idx)
         pos_emb = self.transformer.wpe(pos)
         x = self.transformer.drop(tok_emb + pos_emb)
 
-        # Transformer blocks
-        for block in self.transformer.h:
-            x = block(x)
+        present_key_values = []
+        for i, block in enumerate(self.transformer.h):
+            past_kv = past_key_values[i] if past_key_values is not None else None
+            x, present_kv = block(x, past_key_value=past_kv)
+            present_key_values.append(present_kv)
 
-        # Final layer norm and language model head
         x = self.transformer.ln_f(x)
         logits = self.lm_head(x)
 
         loss = None
         if targets is not None:
-            # if we are given some desired targets also calculate the loss
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
-        return logits, loss
+        return logits, loss, present_key_values
 
     @torch.no_grad()
-    def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_p: float = 0.9) -> torch.Tensor:
+    def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_p: float = 0.9, use_cache: bool = True) -> torch.Tensor:
         """
-        Autoregressively generates a sequence of tokens using top-p (nucleus) sampling.
+        Autoregressively generates a sequence of tokens.
         """
         self.eval()
+        past_key_values = None
+
         for _ in range(max_new_tokens):
-            idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
-            logits, _ = self(idx_cond)
+            if use_cache:
+                if past_key_values is not None:
+                    # Current total length = past_length + 1
+                    past_length = past_key_values[0][0].size(2)
+                    if past_length >= self.config.block_size:
+                        # Truncate cache to allow for one new token (sliding window)
+                        past_key_values = [ (k[:, :, 1:, :], v[:, :, 1:, :]) for k, v in past_key_values ]
+                    idx_cond = idx[:, -1:]
+                else:
+                    # Initial prompt
+                    idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+
+                logits, _, past_key_values = self(idx_cond, past_key_values=past_key_values)
+            else:
+                idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+                logits, _, _ = self(idx_cond)
+
             logits = logits[:, -1, :] / temperature
 
             # Top-p (nucleus) sampling
@@ -372,16 +252,12 @@ class GPT(nn.Module):
             sorted_probs, sorted_indices = torch.sort(probs, descending=True)
             cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
 
-            # Remove tokens with cumulative probability above the threshold
             sorted_indices_to_remove = cumulative_probs > top_p
-            # Shift the indices to the right to keep the first token above the threshold
             sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
             sorted_indices_to_remove[..., 0] = 0
 
             indices_to_remove = sorted_indices[sorted_indices_to_remove]
             probs[:, indices_to_remove] = 0
-
-            # Renormalize the probabilities
             probs = probs / torch.sum(probs, dim=-1, keepdim=True)
 
             idx_next = torch.multinomial(probs, num_samples=1)

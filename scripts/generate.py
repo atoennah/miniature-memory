@@ -1,5 +1,22 @@
+# [INJECTOR: THE ART OF INFERENCE SCALING]
+#
+# Generating text from a trained LLM is a balance of compute, memory bandwidth, and
+# creativity. This script is designed to measure the "Statistical Truths" of the
+# model's generation capabilities.
+#
+# [MATHEMATICAL NOTE: TOKENS PER SECOND (TPS)]
+# Formula: TPS = max_new_tokens / total_time
+# This is the primary metric for inference efficiency. For a small GPT, this is
+# typically bound by CPU/GPU memory bandwidth rather than FLOPS.
+#
+# [INJECTOR OPTIMIZATION: O(1) STARTUP]
+# Previously, this script scanned the entire training dataset to rebuild the
+# vocabulary. We now use the persistent `_meta.pkl` artifact, reducing startup
+# time from O(Dataset_Size) to O(1).
+
 import sys
 import os
+import pickle
 # Add project root to the Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -10,19 +27,28 @@ import psutil
 import time
 from training.model import GPT, GPTConfig
 
-def get_tokenizer(data_path):
-    """Creates the same character-level tokenizer from the training data."""
-    with open(data_path, 'r', encoding='utf-8') as f:
-        text = f.read()
+def get_tokenizer_from_meta(data_path):
+    """Loads the character-level tokenizer from persistent metadata."""
+    meta_path = data_path + "_meta.pkl"
+    if not os.path.exists(meta_path):
+        # Fallback to building it if meta doesn't exist (safety)
+        print(f"Warning: Metadata not found at {meta_path}. Building from source...")
+        with open(data_path, 'r', encoding='utf-8') as f:
+            text = f.read()
+        chars = sorted(list(set(text)))
+        stoi = {ch: i for i, ch in enumerate(chars)}
+        itos = {i: ch for i, ch in enumerate(chars)}
+        vocab_size = len(chars)
+    else:
+        print(f"Loading tokenizer metadata from {meta_path}...")
+        with open(meta_path, 'rb') as f:
+            meta = pickle.load(f)
+        stoi = meta['stoi']
+        itos = meta['itos']
+        vocab_size = meta['vocab_size']
 
-    chars = sorted(list(set(text)))
-    vocab_size = len(chars)
-
-    stoi = {ch: i for i, ch in enumerate(chars)}
-    itos = {i: ch for i, ch in enumerate(chars)}
-
-    encode = lambda s: [stoi[c] for c in s]
-    decode = lambda l: ''.join([itos[i] for i in l])
+    encode = lambda s: [stoi.get(c, 0) for c in s]
+    decode = lambda l: ''.join([itos.get(i, '') for i in l])
 
     return vocab_size, encode, decode
 
@@ -31,7 +57,7 @@ def main(config, checkpoint_path, max_new_tokens, start_text):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     # --- Load Model and Tokenizer ---
-    vocab_size, encode, decode = get_tokenizer(config['data']['path'])
+    vocab_size, encode, decode = get_tokenizer_from_meta(config['data']['path'])
 
     gpt_config = GPTConfig(
         vocab_size=vocab_size,
@@ -43,7 +69,13 @@ def main(config, checkpoint_path, max_new_tokens, start_text):
     )
 
     model = GPT(gpt_config)
-    model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+
+    # Load checkpoint
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    # Handle state_dict if it was saved directly or in a wrapper
+    state_dict = checkpoint if 'model' not in checkpoint else checkpoint['model']
+    model.load_state_dict(state_dict)
+
     model.to(device)
     model.eval()
 
@@ -65,7 +97,8 @@ def main(config, checkpoint_path, max_new_tokens, start_text):
             x,
             max_new_tokens=max_new_tokens,
             temperature=config['inference']['temperature'],
-            top_p=config['inference']['top_p']
+            top_p=config['inference']['top_p'],
+            use_cache=True # Now utilizing the Bolt KV-cache
         )
         output_text = decode(y[0].tolist())
 
@@ -80,7 +113,7 @@ def main(config, checkpoint_path, max_new_tokens, start_text):
     duration = end_time - start_time
     tokens_per_sec = max_new_tokens / duration if duration > 0 else float('inf')
 
-    print(f"Performance Metrics:")
+    print(f"Performance Metrics (BOLT Mode):")
     print(f"  - Peak RAM Usage: {mem_after:.2f} MB")
     print(f"  - Initial RAM:    {mem_before:.2f} MB")
     print(f"  - Generation Time:  {duration:.2f} seconds")
