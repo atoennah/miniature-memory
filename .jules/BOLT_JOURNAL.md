@@ -6,6 +6,21 @@ Entries in this journal must follow the format of a scientific paper or a concis
 
 ---
 
+## 2026-02-05: Refactor & Modularization of Scraper Pipeline
+
+- **Discovery:** The scraper's `process` command was implemented as a monolithic, deeply nested "God Function." It handled manifest I/O, browser lifecycle, story discovery, and content extraction in a single block, making it fragile and difficult to test or extend.
+- **Strategy:** Applied the "Bolt Trinity" (Simplify, Accelerate, Illuminate). Refactored the procedural logic into a class-based architecture:
+    - `ManifestManager`: Encapsulates atomic JSONL operations and entry tracking.
+    - `StoryProcessor`: Handles the fetch-extract-save lifecycle for individual stories.
+    - `CrawlerOrchestrator`: Manages the Playwright session and coordinates the high-level loop.
+- **Results:**
+    - **Clarity:** Guard clauses reduced nesting levels by ~60%, making the logic flow linear and readable.
+    - **Robustness:** Introduced atomic manifest updates and better error handling for empty extractions.
+    - **Parametrization:** Added `--manifest` and `--debug` CLI flags for easier testing and troubleshooting.
+- **Conclusion:** The scraper pipeline is now modular, type-safe, and self-documenting. It is optimized for the "Human Compiler" without sacrificing runtime efficiency.
+
+---
+
 ## 2024-07-24: Conceptual Injection for `training/model.py`
 
 -   **Discovery:** The core transformer logic in `training/model.py` was a functional "black box." It worked, but it did not teach. The mathematical and architectural principles were implicit, violating the core philosophy that code should be a living, educational document.

@@ -29,6 +29,17 @@ def main():
     process_parser = subparsers.add_parser(
         "process", help="Heuristically crawl index pages to find and process story URLs."
     )
+    process_parser.add_argument(
+        "--manifest",
+        type=str,
+        default="dataset/metadata/urls.jsonl",
+        help="Path to the JSONL manifest file."
+    )
+    process_parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Save browser screenshots and DOM dumps for debugging."
+    )
     process_parser.set_defaults(func=run_process)
 
     args = parser.parse_args()

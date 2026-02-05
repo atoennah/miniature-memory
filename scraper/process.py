@@ -1,25 +1,31 @@
+"""
+Core processing utilities for fetching and extracting text from web pages.
+"""
 from playwright.sync_api import sync_playwright
-from bs4 import BeautifulSoup
 import trafilatura
+from typing import Optional
 
-def fetch_html(url: str) -> str | None:
+
+def fetch_html(url: str) -> Optional[str]:
     """
     Fetches the HTML content for a given URL using a headless browser.
 
+    This function launches a temporary Chromium instance to load the page,
+    waiting for the network to be idle to ensure dynamic content is loaded.
+
     Args:
-        url (str): The URL to fetch.
+        url: The URL to fetch.
 
     Returns:
-        str | None: The HTML content as a string, or None if an error occurs.
+        The HTML content of the page as a string, or None if the fetch fails.
     """
-
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
-            # Set a longer timeout (60 seconds) for pages that are slow to load
+            # Set a longer timeout (60 seconds) for slow pages
             page.goto(url, timeout=60000)
-            # Wait for the network to be idle, indicating the page has likely loaded
+            # Wait for the network to be idle
             page.wait_for_load_state('networkidle')
             html = page.content()
             browser.close()
@@ -28,21 +34,25 @@ def fetch_html(url: str) -> str | None:
         print(f"Error fetching {url} with Playwright: {e}")
         return None
 
-def extract_text(html: str) -> str:
+
+def extract_text(html: Optional[str]) -> str:
     """
     Extracts the main story text from HTML using trafilatura.
-    This is much more effective at removing boilerplate than a simple
-    paragraph-tag search.
+
+    Trafilatura is used for its superior ability to identify the primary
+    content area while stripping boilerplate like navigation, ads, and footers.
 
     Args:
-        html (str): The HTML content of the page.
+        html: The raw HTML content of the page.
 
     Returns:
-        str: The extracted plain text content.
+        The extracted plain text content. Returns an empty string if HTML is
+        None or if extraction fails.
     """
     if not html:
         return ""
 
     # Trafilatura is a library specifically designed to extract the main
     # text content from a webpage, filtering out menus, ads, and footers.
-    return trafilatura.extract(html)
+    extracted = trafilatura.extract(html)
+    return extracted if extracted else ""
