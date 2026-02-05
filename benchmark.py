@@ -39,12 +39,12 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
 
     # Warmup phase
     for _ in range(warmup_steps):
-        _, _ = model(dummy_input, dummy_target)
+        _, _, _ = model(dummy_input, dummy_target)
 
     # Benchmark phase
     start_time = time.time()
     for _ in range(num_steps):
-        _, _ = model(dummy_input, dummy_target)
+        _, _, _ = model(dummy_input, dummy_target)
     end_time = time.time()
 
     # Calculate throughput

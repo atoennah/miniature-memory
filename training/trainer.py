@@ -120,6 +120,11 @@ class Trainer:
         assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
         assert len(param_dict.keys() - union_params) == 0, "Parameters not in decay/no_decay sets"
 
+        # Filter sets to only include parameters that were actually found in named_parameters
+        # (Handling tied weights like lm_head.weight which may not appear separately)
+        decay = {pn for pn in decay if pn in param_dict}
+        no_decay = {pn for pn in no_decay if pn in param_dict}
+
         optim_groups = [
             {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": self.config['training']['weight_decay']},
             {"params": [param_dict[pn] for pn in sorted(list(no_decay))], "weight_decay": 0.0},
@@ -183,7 +188,7 @@ class Trainer:
         xb, yb = self.data_manager.get_batch()
 
         with torch.amp.autocast(device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')):
-            _, loss = self.model(xb, yb)
+            _, loss, _ = self.model(xb, yb)
 
         self.optimizer.zero_grad(set_to_none=True)
         scaler.scale(loss).backward()

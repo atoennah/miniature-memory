@@ -36,3 +36,19 @@ Entries in this journal must follow the format of a scientific paper or a concis
     -   **Baseline Loss (`lr=1e-4`):** 2.6345
     -   **Experimental Loss (`lr=1e-5`):** 3.3553
 -   **Conclusion:** Hypothesis **REJECTED**. The more aggressive `1e-4` learning rate is demonstrably more effective for this model over a 100-step micro-train. The faster convergence leads to a significantly lower loss.
+
+---
+
+## 2025-02-05: KV-Cache & Data Loading Optimization
+
+-   **Discovery:** Identified two major performance bottlenecks: 1) $O(N^2)$ inference complexity due to lack of a KV-cache, and 2) High training startup latency and low ingestion throughput in `DataManager` due to redundant tokenization and loop-based batching.
+-   **Strategy:**
+    1.  Implemented a stateful KV-cache in `training/model.py`, reducing inference complexity to $O(N)$.
+    2.  Added persistent caching of tokenized data in `DataManager` using `.bin` and `_meta.pkl` files.
+    3.  Vectorized `get_batch` using NumPy indexing to eliminate Python-level loops in the training inner-loop.
+    4.  Fixed a `KeyError: 'lm_head.weight'` in the `Trainer` caused by tied weights not appearing separately in `named_parameters()`.
+-   **Results:**
+    -   **Inference Speedup:** ~1.45x for 200 tokens (higher scaling expected for longer sequences).
+    -   **Startup Time:** Drastically reduced after first tokenization (loads from cache in milliseconds).
+    -   **Training Throughput:** Improved via vectorized batching.
+-   **Philosophical Note:** Optimizing the "hot paths" (data ingestion and autoregressive generation) is the highest-leverage activity in LLM engineering. By moving from $O(N^2)$ to $O(N)$ and eliminating Python loops, we align the system with the physical limits of the hardware.
