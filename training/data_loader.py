@@ -1,5 +1,7 @@
 import torch
 import numpy as np
+import pickle
+import os
 from typing import Tuple, Callable, List, Dict
 
 class DataManager:
@@ -37,9 +39,29 @@ class DataManager:
 
     def _initialize_tokenizer_and_data(self, data_path: str) -> None:
         """
-        Reads data in chunks, creates a tokenizer, and prepares a memory-mapped
+        Reads data, creates or loads a tokenizer, and prepares a memory-mapped
         dataset without loading the entire file into RAM.
         """
+        tokenized_data_path = data_path + ".bin"
+        meta_path = data_path + "_meta.pkl"
+        dtype = np.uint16  # Assuming vocab_size < 65535
+
+        # Check if artifacts already exist to avoid redundant computation
+        if os.path.exists(tokenized_data_path) and os.path.exists(meta_path):
+            print(f"Loading existing data artifacts: {tokenized_data_path}, {meta_path}")
+            with open(meta_path, 'rb') as f:
+                meta = pickle.load(f)
+            self.vocab_size = meta['vocab_size']
+            stoi = meta['stoi']
+            itos = meta['itos']
+            total_size = meta['total_size']
+
+            self.encode = lambda s: [stoi.get(c, 0) for c in s]
+            self.decode = lambda l: ''.join([itos.get(i, '') for i in l])
+            self.data = np.memmap(tokenized_data_path, dtype=dtype, mode='r', shape=(total_size,))
+            return
+
+        print(f"Creating new data artifacts for {data_path}...")
         # --- Step 1: Build vocabulary by streaming the file ---
         char_set = set()
         total_size = 0
@@ -63,9 +85,6 @@ class DataManager:
         self.decode: Callable[[List[int]], str] = lambda l: ''.join([itos.get(i, '') for i in l])
 
         # --- Step 2: Create memory-mapped file and tokenize in chunks ---
-        tokenized_data_path = data_path + ".bin"
-        dtype = np.uint16  # Assuming vocab_size < 65535
-
         # Create the memory-mapped file with the correct total size
         mm = np.memmap(tokenized_data_path, dtype=dtype, mode='w+', shape=(total_size,))
 
@@ -80,15 +99,27 @@ class DataManager:
                 mm[processed_size:processed_size + len(encoded_chunk)] = encoded_chunk
                 processed_size += len(encoded_chunk)
 
-        # Flush changes to disk and set the data attribute for reading
+        # Flush changes to disk
         mm.flush()
         self.data = np.memmap(tokenized_data_path, dtype=dtype, mode='r', shape=(total_size,))
+
+        # --- Step 3: Save metadata ---
+        meta = {
+            'vocab_size': self.vocab_size,
+            'stoi': stoi,
+            'itos': itos,
+            'total_size': total_size
+        }
+        with open(meta_path, 'wb') as f:
+            pickle.dump(meta, f)
+        print(f"Artifacts saved: {tokenized_data_path}, {meta_path}")
 
     def get_batch(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Generates a small batch of data of inputs x and targets y.
 
-        This method reads directly from the memory-mapped file.
+        This method reads directly from the memory-mapped file and uses
+        vectorized extraction for improved throughput.
 
         Returns:
             A tuple containing:
@@ -96,13 +127,20 @@ class DataManager:
             - A (batch_size, block_size) tensor of target token IDs.
         """
         # Generate random starting indices for each batch
-        ix = torch.randint(len(self.data) - self.block_size, (self.batch_size,))
+        ix = np.random.randint(0, len(self.data) - self.block_size, (self.batch_size,))
 
-        # Create input and target sequences by reading from the memmap array
-        # and converting to torch tensors
-        x = torch.stack([torch.from_numpy(self.data[i:i+self.block_size].astype(np.int64)) for i in ix])
-        y = torch.stack([torch.from_numpy(self.data[i+1:i+self.block_size+1].astype(np.int64)) for i in ix])
+        # Vectorized extraction from memmap:
+        # We create a 2D array of indices for advanced indexing
+        offsets = np.arange(self.block_size)
+        indices_x = ix[:, None] + offsets
+        indices_y = indices_x + 1
 
-        # Move tensors to the specified device
-        x, y = x.to(self.device), y.to(self.device)
+        # Extract data using NumPy advanced indexing
+        x_np = self.data[indices_x].astype(np.int64)
+        y_np = self.data[indices_y].astype(np.int64)
+
+        # Convert to torch tensors and move to device
+        x = torch.from_numpy(x_np).to(self.device)
+        y = torch.from_numpy(y_np).to(self.device)
+
         return x, y

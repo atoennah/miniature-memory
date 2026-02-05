@@ -8,10 +8,27 @@ import yaml
 import argparse
 import psutil
 import time
+import pickle
 from training.model import GPT, GPTConfig
 
 def get_tokenizer(data_path):
-    """Creates the same character-level tokenizer from the training data."""
+    """Creates or loads the character-level tokenizer from artifacts or training data."""
+    meta_path = data_path + "_meta.pkl"
+
+    if os.path.exists(meta_path):
+        print(f"Loading tokenizer from metadata: {meta_path}")
+        with open(meta_path, 'rb') as f:
+            meta = pickle.load(f)
+
+        vocab_size = meta['vocab_size']
+        stoi = meta['stoi']
+        itos = meta['itos']
+
+        encode = lambda s: [stoi.get(c, 0) for c in s]
+        decode = lambda l: ''.join([itos.get(i, '') for i in l])
+        return vocab_size, encode, decode
+
+    print(f"Metadata not found at {meta_path}. Falling back to scanning training data: {data_path}")
     with open(data_path, 'r', encoding='utf-8') as f:
         text = f.read()
 
@@ -21,8 +38,8 @@ def get_tokenizer(data_path):
     stoi = {ch: i for i, ch in enumerate(chars)}
     itos = {i: ch for i, ch in enumerate(chars)}
 
-    encode = lambda s: [stoi[c] for c in s]
-    decode = lambda l: ''.join([itos[i] for i in l])
+    encode = lambda s: [stoi.get(c, 0) for c in s]
+    decode = lambda l: ''.join([itos.get(i, '') for i in l])
 
     return vocab_size, encode, decode
 

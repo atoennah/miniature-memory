@@ -1,8 +1,21 @@
+data:
+  path: 'dataset/processed/train.txt'
 model:
-  block_size: 256
-  n_layer: 6
-  n_head: 6
-  n_embd: 384
-  dropout: 0.2
+  n_layer: 1
+  n_head: 1
+  n_embd: 32
+  block_size: 64
+  dropout: 0.0
 training:
-  batch_size: 64
+  output_dir: 'training/checkpoints_benchmark'
+  batch_size: 4
+  learning_rate: 1.0e-3
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  max_steps: 10
+  eval_interval: 5
+  warmup_iters: 2
+  lr_decay_iters: 10
+  min_lr: 1.0e-4
+  decay_lr: True
