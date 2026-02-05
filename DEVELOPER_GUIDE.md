@@ -34,8 +34,7 @@ Understanding the repository layout is key to contributing effectively.
 ├── .gitignore          # Specifies intentionally untracked files
 ├── CONTRIBUTING.md     # The locked, non-negotiable project intent
 ├── DEVELOPER_GUIDE.md  # This file
-├── README.md           # High-level project overview
-└── ROADMAP.md          # Long-term project goals
+└── README.md           # High-level project overview
 ```
 
 ## 3. The Data Pipeline

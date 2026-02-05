@@ -136,14 +136,13 @@ There is no implied neutrality.
 
 # Approval & Review Process
 
-All submissions are reviewed for:
+All submissions are processed through the 3-Agent governance model:
 
-- Adult-intent alignment
-- Reproducibility
-- Pipeline integrity
-- Long-term maintainability
+1.  **Builder Proposes:** The Builder implements features and submits them for review.
+2.  **Curator Validates:** The Curator reviews the submission, focusing on data integrity, reproducibility, and adherence to pipeline standards.
+3.  **BDFL Decides:** The BDFL performs the final review, assessing the contribution for alignment with the project's locked intent and overall vision.
 
-Maintainers may reject contributions solely on intent mismatch, even if technically correct.
+The BDFL may reject contributions solely on intent mismatch, even if technically correct.
 
 # Zero-Tolerance for Intent Drift
 
