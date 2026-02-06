@@ -1,8 +1,25 @@
+# Minimal configuration for rapid smoke-testing and benchmarking.
 model:
-  block_size: 256
-  n_layer: 6
-  n_head: 6
-  n_embd: 384
-  dropout: 0.2
+  n_layer: 4
+  n_head: 4
+  n_embd: 128
+  block_size: 128
+  dropout: 0.0
+
 training:
-  batch_size: 64
+  batch_size: 16
+  learning_rate: 1.0e-3
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.99
+  grad_clip: 1.0
+  decay_lr: True
+  warmup_iters: 2
+  lr_decay_iters: 10
+  min_lr: 1.0e-4
+  max_steps: 10
+  eval_interval: 5
+  output_dir: 'out-benchmark'
+
+data:
+  path: 'dataset/processed/train.txt'

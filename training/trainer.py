@@ -86,43 +86,27 @@ class Trainer:
     def _build_optimizer(self) -> torch.optim.Optimizer:
         """
         Builds the AdamW optimizer with a sophisticated weight decay strategy.
-        This method separates model parameters into two groups: those that will
-        experience weight decay and those that will not. Typically, biases,
-        LayerNorm weights, and Embedding weights are not weight-decayed.
-        This helps prevent overfitting without harming model performance.
-        Returns:
-            torch.optim.Optimizer: The configured AdamW optimizer.
+        Optimized to handle tied weights (avoiding KeyError) and exclude
+        biases and 1D tensors (LayerNorm, etc.) from decay.
         """
-        decay = set()
-        no_decay = set()
-        whitelist_weight_modules = (torch.nn.Linear, )
-        blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding)
+        # Filter out parameters that do not require gradients
+        param_dict = {pn: p for pn, p in self.model.named_parameters() if p.requires_grad}
 
-        # Iterate over all named modules and their parameters
-        for mn, m in self.model.named_modules():
-            for pn, p in m.named_parameters():
-                fpn = '%s.%s' % (mn, pn) if mn else pn
-
-                # Biases are never decayed
-                if pn.endswith('bias'):
-                    no_decay.add(fpn)
-                # Weights of linear layers are decayed
-                elif pn.endswith('weight') and isinstance(m, whitelist_weight_modules):
-                    decay.add(fpn)
-                # Weights of LayerNorm and Embedding are not decayed
-                elif pn.endswith('weight') and isinstance(m, blacklist_weight_modules):
-                    no_decay.add(fpn)
-
-        # Sanity checks to ensure every parameter is in one of the sets
-        param_dict = {pn: p for pn, p in self.model.named_parameters()}
-        inter_params = decay & no_decay
-        union_params = decay | no_decay
-        assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
-        assert len(param_dict.keys() - union_params) == 0, "Parameters not in decay/no_decay sets"
+        # Create optimization groups
+        # Any parameter that is 2D will be weight decayed, otherwise not.
+        # This includes all weights in matmuls and embeddings, but excludes biases and layernorms.
+        # We also explicitly exclude embeddings (wte, wpe) as per project convention.
+        decay = []
+        no_decay = []
+        for pn, p in param_dict.items():
+            if p.dim() < 2 or 'ln' in pn or 'wte' in pn or 'wpe' in pn:
+                no_decay.append(p)
+            else:
+                decay.append(p)
 
         optim_groups = [
-            {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": self.config['training']['weight_decay']},
-            {"params": [param_dict[pn] for pn in sorted(list(no_decay))], "weight_decay": 0.0},
+            {"params": decay, "weight_decay": self.config['training']['weight_decay']},
+            {"params": no_decay, "weight_decay": 0.0},
         ]
 
         learning_rate = self.config['training']['learning_rate']
@@ -183,7 +167,7 @@ class Trainer:
         xb, yb = self.data_manager.get_batch()
 
         with torch.amp.autocast(device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')):
-            _, loss = self.model(xb, yb)
+            _, loss, _ = self.model(xb, yb)
 
         self.optimizer.zero_grad(set_to_none=True)
         scaler.scale(loss).backward()

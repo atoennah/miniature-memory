@@ -36,3 +36,20 @@ Entries in this journal must follow the format of a scientific paper or a concis
     -   **Baseline Loss (`lr=1e-4`):** 2.6345
     -   **Experimental Loss (`lr=1e-5`):** 3.3553
 -   **Conclusion:** Hypothesis **REJECTED**. The more aggressive `1e-4` learning rate is demonstrably more effective for this model over a 100-step micro-train. The faster convergence leads to a significantly lower loss.
+
+---
+
+## 2024-07-25: KV-Cache Optimization for O(N) Generation
+
+-   **Discovery:** The generation logic in `training/model.py` was $O(N^2)$ due to full-sequence recomputation for every new token. Additionally, a `KeyError` in `training/trainer.py` prevented training models with tied weights (Word Token Embeddings tied to LM Head).
+-   **Strategy:**
+    1.  **Refactored `_build_optimizer`**: Switched to a robust parameter grouping logic using `named_parameters()` to correctly handle tied weights and exclude 1D tensors/embeddings from decay.
+    2.  **Stateful KV-Caching**: Implemented KV-caching in `CausalSelfAttention`, propagating state through `Block` and `GPT`. Refactored `GPT.generate` to use incremental $O(1)$ forward passes per token.
+    3.  **Sliding Window**: Added logic to truncate the KV-cache to `block_size` to maintain stability during long-form generation.
+-   **Methodology:** Measured Tokens Per Second (TPS) using a 6-layer, 384-dim configuration with a 512-token context.
+-   **Results:**
+    -   **Baseline (O(N^2))**: 59.46 TPS
+    -   **Optimized (KV-Cache)**: 226.16 TPS
+    -   **Speedup**: **~3.8x**
+-   **Conclusion:** The optimization significantly reduces inference latency, especially for longer sequences. The mathematical correctness was verified using `scripts/verify_kv_cache.py`, showing identical logits within the `block_size` boundary.
+-   **Philosophical Note:** Efficiency is not just a luxury; it is a requirement for scalability. By moving from quadratic to linear complexity, we align the system with the physical reality of resource-constrained environments.
