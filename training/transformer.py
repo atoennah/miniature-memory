@@ -5,6 +5,18 @@
 # every core component of the Transformer architecture (as described in "Attention Is All
 # You Need") from basic PyTorch primitives.
 #
+# [INJECTOR: THE ONTOLOGY OF AUTOREGRESSIVE MODELING]
+# The goal of this architecture is to approximate the joint probability distribution of
+# a sequence of tokens by decomposing it into a product of conditional probabilities:
+# P(x_1, ..., x_n) = \prod P(x_i | x_1, ..., x_{i-1}).
+#
+# By training the model to predict the "next token" (autoregressive modeling), we
+# force it to internalize the underlying structure, syntax, and semantics of the
+# training data. In a sufficiently large and diverse dataset, this objective leads to
+# the emergence of complex "reasoning" capabilities, as the model must understand the
+# context to minimize the cross-entropy loss between its predicted distribution and
+# the actual target token.
+#
 # The hierarchy of the model is as follows:
 # 1.  GPT (The full model)
 #       - Manages token and positional embeddings.
@@ -182,7 +194,33 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
-        # Causal self-attention using PyTorch's fused kernel
+        # [INJECTOR: THE LOGOS OF THE FUSED ATTENTION KERNEL]
+        #
+        # Here we invoke `F.scaled_dot_product_attention`, a critical optimization in modern
+        # deep learning. While conceptually simple, the implementation is a "fused kernel"
+        # that integrates the scaling, masking, softmax, and weighted sum into a single
+        # GPU operation (often using FlashAttention-2 or Memory-Efficient Attention).
+        #
+        # 1. MATHEMATICAL IDENTITY:
+        #    Conceptually, we are computing: Softmax( (QK^T / sqrt(d_k)) + Mask ) V.
+        #    The 1/sqrt(d_k) factor (where d_k is the head size) is non-negotiable.
+        #    Without it, for large head sizes, the variance of the dot product (Q@K.T)
+        #    grows to O(d_k). This pushes the Softmax into regions where its gradient
+        #    is nearly zero (vanishing gradients), effectively killing the training.
+        #
+        # 2. COMPUTATIONAL EFFICIENCY (FLASH ATTENTION):
+        #    A naive implementation requires O(N^2) memory to store the attention matrix
+        #    (where N is sequence length). For N=1024, that's 1M elements PER HEAD.
+        #    Fused kernels like FlashAttention avoid this by using "tiling." They split
+        #    the Q, K, and V matrices into small blocks that fit into the GPU's fast
+        #    SRAM. They compute the softmax and the weighted sum block-by-block without
+        #    ever materializing the full N x N matrix in main memory (HBM).
+        #
+        # 3. MEMORY COMPLEXITY:
+        #    Standard Attention: O(N^2) memory, O(N^2) compute.
+        #    Fused Attention: O(N) memory, O(N^2) compute.
+        #    This transition from quadratic to linear memory allows us to train with
+        #    much larger context windows (block_size) on limited hardware.
         y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
 
         # Re-assemble all head outputs side by side

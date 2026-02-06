@@ -6,3 +6,13 @@ model:
   dropout: 0.2
 training:
   batch_size: 64
+  max_steps: 1
+  learning_rate: 0.0001
+  min_lr: 0.00001
+  warmup_iters: 0
+  lr_decay_iters: 1
+  eval_interval: 1
+  output_dir: out/test_checkpoint
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95

@@ -40,7 +40,7 @@ import torch.nn as nn
 from typing import Dict, Any, Optional
 
 from .data_loader import DataManager
-from .model import GPT, GPTConfig
+from .transformer import GPT, GPTConfig
 
 class Trainer:
     """
@@ -99,8 +99,10 @@ class Trainer:
         blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding)
 
         # Iterate over all named modules and their parameters
+        # We use recurse=False to avoid yielding the same parameter multiple times
+        # when iterating through the module hierarchy.
         for mn, m in self.model.named_modules():
-            for pn, p in m.named_parameters():
+            for pn, p in m.named_parameters(recurse=False):
                 fpn = '%s.%s' % (mn, pn) if mn else pn
 
                 # Biases are never decayed
@@ -115,10 +117,18 @@ class Trainer:
 
         # Sanity checks to ensure every parameter is in one of the sets
         param_dict = {pn: p for pn, p in self.model.named_parameters()}
+
+        # When weights are tied (e.g., embedding and output layers), the same
+        # parameter object will have multiple names. named_parameters() at the
+        # top level only returns one of these names. We must ensure our sets
+        # only contain names that are actually in param_dict.
+        decay = {pn for pn in decay if pn in param_dict}
+        no_decay = {pn for pn in no_decay if pn in param_dict}
+
         inter_params = decay & no_decay
         union_params = decay | no_decay
-        assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
-        assert len(param_dict.keys() - union_params) == 0, "Parameters not in decay/no_decay sets"
+        assert len(inter_params) == 0, f"Parameters in both decay/no_decay sets: {inter_params}"
+        assert len(param_dict.keys() - union_params) == 0, f"Parameters not in decay/no_decay sets: {param_dict.keys() - union_params}"
 
         optim_groups = [
             {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": self.config['training']['weight_decay']},

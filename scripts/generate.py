@@ -8,7 +8,7 @@ import yaml
 import argparse
 import psutil
 import time
-from training.model import GPT, GPTConfig
+from training.transformer import GPT, GPTConfig
 
 def get_tokenizer(data_path):
     """Creates the same character-level tokenizer from the training data."""
