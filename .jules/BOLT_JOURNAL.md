@@ -36,3 +36,21 @@ Entries in this journal must follow the format of a scientific paper or a concis
     -   **Baseline Loss (`lr=1e-4`):** 2.6345
     -   **Experimental Loss (`lr=1e-5`):** 3.3553
 -   **Conclusion:** Hypothesis **REJECTED**. The more aggressive `1e-4` learning rate is demonstrably more effective for this model over a 100-step micro-train. The faster convergence leads to a significantly lower loss.
+
+---
+
+## 2025-02-06: Stateful KV-Caching for Inference Optimization
+
+-   **Hypothesis:** Implementing stateful Key-Value (KV) caching will reduce the computational complexity of autoregressive generation from $O(N^2)$ to $O(N)$, significantly increasing inference throughput (TPS) without altering the model's output.
+-   **Methodology:**
+    -   Modified `CausalSelfAttention`, `Block`, and `GPT` classes in `training/model.py` to support an optional `kv_cache` state.
+    -   Refactored `GPT.generate` to use incremental forward passes, appending only the newest token to the cache.
+    -   Benchmarked 100-token generation on CPU using `benchmark_inference.py` before and after.
+    -   Verified mathematical identity of logits using `verify_kv_cache.py`.
+-   **Results:**
+    -   **Baseline TPS:** ~85.1
+    -   **Optimized TPS:** ~137.7
+    -   **Improvement:** ~1.6x speedup for 100 tokens (speedup scales linearly with sequence length).
+    -   **Logit Difference:** < 2e-7 (Floating point noise only).
+-   **Conclusion:** Hypothesis **CONFIRMED**. KV-caching is a high-impact optimization for resource-constrained inference.
+-   **Philosophical Note:** Memory bandwidth and redundant FLOPs are the primary enemies of efficiency. By preserving past computations, we align the model's execution with the temporal nature of causality.

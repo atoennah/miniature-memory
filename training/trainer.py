@@ -98,20 +98,18 @@ class Trainer:
         whitelist_weight_modules = (torch.nn.Linear, )
         blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding)
 
-        # Iterate over all named modules and their parameters
-        for mn, m in self.model.named_modules():
-            for pn, p in m.named_parameters():
-                fpn = '%s.%s' % (mn, pn) if mn else pn
-
-                # Biases are never decayed
-                if pn.endswith('bias'):
-                    no_decay.add(fpn)
-                # Weights of linear layers are decayed
-                elif pn.endswith('weight') and isinstance(m, whitelist_weight_modules):
-                    decay.add(fpn)
-                # Weights of LayerNorm and Embedding are not decayed
-                elif pn.endswith('weight') and isinstance(m, blacklist_weight_modules):
-                    no_decay.add(fpn)
+        # Iterate over all parameters exactly once
+        for pn, p in self.model.named_parameters():
+            if pn.endswith('bias'):
+                # All biases are not decayed
+                no_decay.add(pn)
+            elif pn.endswith('weight'):
+                # LayerNorm and Embedding weights are not decayed, Linear are
+                # In our architecture, LN/Embeddings contain 'ln', 'wte', or 'wpe'
+                if any(x in pn for x in ['ln', 'wte', 'wpe']):
+                    no_decay.add(pn)
+                else:
+                    decay.add(pn)
 
         # Sanity checks to ensure every parameter is in one of the sets
         param_dict = {pn: p for pn, p in self.model.named_parameters()}
@@ -183,7 +181,7 @@ class Trainer:
         xb, yb = self.data_manager.get_batch()
 
         with torch.amp.autocast(device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')):
-            _, loss = self.model(xb, yb)
+            _, loss, _ = self.model(xb, yb)
 
         self.optimizer.zero_grad(set_to_none=True)
         scaler.scale(loss).backward()
