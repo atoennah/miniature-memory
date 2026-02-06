@@ -1,8 +1,25 @@
 model:
-  block_size: 256
-  n_layer: 6
-  n_head: 6
-  n_embd: 384
-  dropout: 0.2
+  block_size: 64
+  n_layer: 2
+  n_head: 2
+  n_embd: 128
+  dropout: 0.0
 training:
-  batch_size: 64
+  batch_size: 8
+  learning_rate: 0.001
+  min_lr: 0.0001
+  warmup_iters: 2
+  lr_decay_iters: 10
+  max_steps: 5
+  eval_interval: 1
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  decay_lr: true
+  output_dir: "training/checkpoints"
+inference:
+  temperature: 1.0
+  top_p: 0.9
+data:
+  path: "dataset/processed/train.txt"

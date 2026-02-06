@@ -98,10 +98,16 @@ class Trainer:
         whitelist_weight_modules = (torch.nn.Linear, )
         blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding)
 
-        # Iterate over all named modules and their parameters
+        # Separate parameters into decay and no_decay groups
+        param_dict = {pn: p for pn, p in self.model.named_parameters()}
+
         for mn, m in self.model.named_modules():
-            for pn, p in m.named_parameters():
+            for pn, p in m.named_parameters(recurse=False):
                 fpn = '%s.%s' % (mn, pn) if mn else pn
+
+                if fpn not in param_dict:
+                    # Skip tied parameters that are already accounted for under a different name
+                    continue
 
                 # Biases are never decayed
                 if pn.endswith('bias'):
@@ -114,7 +120,6 @@ class Trainer:
                     no_decay.add(fpn)
 
         # Sanity checks to ensure every parameter is in one of the sets
-        param_dict = {pn: p for pn, p in self.model.named_parameters()}
         inter_params = decay & no_decay
         union_params = decay | no_decay
         assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
@@ -183,7 +188,7 @@ class Trainer:
         xb, yb = self.data_manager.get_batch()
 
         with torch.amp.autocast(device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')):
-            _, loss = self.model(xb, yb)
+            _, loss, _ = self.model(xb, yb)
 
         self.optimizer.zero_grad(set_to_none=True)
         scaler.scale(loss).backward()
