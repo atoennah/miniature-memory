@@ -22,12 +22,12 @@ Understanding the repository layout is key to contributing effectively.
 
 ```
 .
-├── .jules/             # Agent-specific instructions and memory
+├── .jules/             # Agent-specific instructions, memory, and Bolt Journal
 ├── dataset/
 │   ├── raw/            # Append-only, immutable raw text files
 │   ├── cleaned/        # Script-generated cleaned text
 │   ├── processed/      # Tokenized, training-ready data files
-│   └── metadata/       # URL manifests and other metadata
+│   └── metadata/       # URL manifests, source lists, and other metadata
 ├── scraper/            # Code for discovering and extracting content
 ├── scripts/            # Automation scripts for data processing and CLI tools
 ├── training/           # Model definition, training loop, and configs
@@ -35,7 +35,7 @@ Understanding the repository layout is key to contributing effectively.
 ├── CONTRIBUTING.md     # The locked, non-negotiable project intent
 ├── DEVELOPER_GUIDE.md  # This file
 ├── README.md           # High-level project overview
-└── ROADMAP.md          # Long-term project goals
+└── benchmark.py        # Performance benchmarking utility
 ```
 
 ## 3. The Data Pipeline
@@ -44,10 +44,10 @@ The data pipeline is the heart of this project. It's a multi-stage process desig
 
 **Golden Rule:** The `dataset/raw/` directory is sacred. Raw data is append-only and must never be manually edited. All transformations are handled by version-controlled scripts to ensure 100% reproducibility.
 
-### Stage 1: URL Discovery (Search)
+### Stage 1: URL Discovery (Search Layer)
 
 -   **Command:** `python3 scripts/cli.py search "<query>" --num-results <number>`
--   **Purpose:** Uses Google Search to find potential URLs for scraping.
+-   **Purpose:** Uses search engines to find potential URLs for scraping.
 -   **Output:** Appends new URLs to `dataset/metadata/urls.jsonl` with the status "new".
 
 ### Stage 2: Content Fetching & Extraction
@@ -60,53 +60,47 @@ The data pipeline is the heart of this project. It's a multi-stage process desig
 
 ### Stage 3: Data Validation, Cleaning, and Preparation
 
-This is a sequence of three scripted steps that process the raw data into a training-ready format.
-
 1.  **Validate Raw Data:**
     -   **Script:** `scripts/validate_raw.py`
-    -   **Purpose:** Performs a quick sanity check on the raw text files. It ensures files have a minimum length and a high ratio of printable characters, filtering out empty or corrupted data.
+    -   **Purpose:** Performs a quick sanity check on the raw text files (minimum length and printable character ratio).
 
-2.  **Clean Dataset:**
+2.  **Clean Dataset (with Language Guard):**
     -   **Script:** `scripts/clean_dataset.py`
-    -   **Purpose:** Sanitizes the raw text by normalizing whitespace, removing non-narrative characters, and stripping extra newlines.
-    -   **Output:** Cleaned text files are written to the `dataset/cleaned/` directory.
+    -   **Purpose:** Sanitizes raw text and applies an Indonesian Language Guard to filter out gambling ads and non-narrative content.
+    -   **Optimization Note:** The cleaner uses a blacklist of keywords (e.g., "slot gacor") to purge polluted paragraphs, ensuring a high-quality narrative corpus.
 
 3.  **Prepare Data for Training:**
     -   **Script:** `scripts/prepare_data.py`
-    -   **Purpose:** Concatenates all cleaned data into a single corpus, performs character-level tokenization, and creates the final `train.txt` and `val.txt` files.
-    -   **Output:** `dataset/processed/train.txt` and `dataset/processed/val.txt`.
+    -   **Purpose:** Concatenates all cleaned data into a single corpus with structural tokens (`<|story_start|>`, `<|end_of_text|>`).
 
 ## 4. Training the Model
 
-Once the dataset is processed, you can train the model using the `training/train.py` script, which is configured via YAML files.
-
-### Configuration (`training/configs/small.yaml`)
-
-All hyperparameters for the model and training loop are managed via YAML configuration files.
-
--   **`model`**: Defines the architecture (embedding size, number of heads, layers, etc.).
--   **`training`**: Defines the training parameters (batch size, learning rate, max steps).
-
-### Running Training
-
 -   **Command:** `python3 training/train.py --config training/configs/small.yaml`
--   **Function:** Starts the training loop using the specified configuration.
--   **Checkpoints:** Model checkpoints are saved periodically to the `out/` directory (by default), allowing for resumable training.
+-   **Resuming:** The script automatically detects and loads the latest checkpoint from the `out_dir`.
 
-### Resuming Training
+## 5. Generating Text & Performance Metrics
 
-If training is interrupted, simply run the same command again. The script will automatically detect and load the latest checkpoint from the `out_dir` specified in the config.
+To generate text and measure model performance:
 
-## 5. Generating Text
+-   **Command:** `python3 scripts/generate.py --config training/configs/small.yaml --checkpoint_path out/model.pt`
+-   **Metrics:** The script automatically reports Peak RAM Usage, Generation Time, and Tokens per Second (TPS).
+-   **Optimization Note:** The model uses **Positional Tensor Caching** (via `register_buffer`) to reduce CPU-to-GPU overhead during inference.
 
-To generate text from a trained model, use the `scripts/generate.py` script.
+## 6. Performance & Science (The Bolt Standard)
 
--   **Command:** `python3 scripts/generate.py --max_new_tokens <number>`
--   **Function:** Loads the latest checkpoint and generates a sample of the specified length.
+All major technical decisions are documented in **[.jules/BOLT_JOURNAL.md](.jules/BOLT_JOURNAL.md)**. Contributors should consult this journal to understand the "why" behind:
+-   The pivot from `torch.compile` to manual tensor caching.
+-   Learning rate selection and micro-training benchmarks.
+-   KV-cache implementation details and impact.
 
-## 6. Contribution Workflow
+## 7. Indonesian Dataset Specialization
 
-1.  **Sync with `main`:** Always ensure your local branch is up-to-date with the latest `main` before starting work.
-2.  **Isolate Your Changes:** Develop new features in separate, well-defined modules to minimize merge conflicts.
-3.  **Adhere to Data Rules:** All changes that affect the dataset must follow the append-only and script-driven transformation principles.
-4.  **Submit for Review:** All changes require review from the Curator and final approval from the BDFL. Ensure your work is clean, documented, and fully aligned with the project's intent as defined in `CONTRIBUTING.md`.
+For details on curated Indonesian sources and pollution blacklists, see:
+-   **[dataset/metadata/SOURCES.md](dataset/metadata/SOURCES.md)** (Curated targets for adult Indonesian content).
+
+## 8. Contribution Workflow
+
+1.  **Sync with `main`**: Always rebase before starting work.
+2.  **Document Proofs**: If you optimize the code, you MUST add a scientific entry to the `BOLT_JOURNAL.md`.
+3.  **Isolate Features**: Keep new functionality in separate modules.
+4.  **No Manual Curation**: Never edit files in `dataset/raw/`.
