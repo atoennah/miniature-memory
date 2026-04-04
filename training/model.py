@@ -144,44 +144,25 @@ class CausalSelfAttention(nn.Module):
         q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
 
         # [INJECTOR: DEMYSTIFYING MULTI-HEAD TENSOR MANIPULATION]
-        #
-        # The core idea of multi-head attention is to run the attention mechanism in
-        # parallel several times, with different, learned linear projections for Q, K,
-        # and V. This allows the model to jointly attend to information from different
-        # representational subspaces at different positions.
-        #
-        # The tensor transformations below are the key to making this efficient.
-        # Let's break down the journey of the Key tensor `k`:
-        #
-        # 1.  Initial shape of `k`: `(B, T, C)`
-        #     - B = Batch size (number of sequences processed at once)
-        #     - T = Sequence length (e.g., `block_size`)
-        #     - C = Embedding dimension (`n_embd`)
-        #
-        # 2.  `k.view(B, T, self.n_head, C // self.n_head)`
-        #     - This reshapes the tensor without changing its data. We are splitting the
-        #       embedding dimension `C` into `n_head` smaller chunks.
-        #     - `hs = C // self.n_head` is the "head size".
-        #     - New shape: `(B, T, nh, hs)` where `nh` is `n_head`.
-        #     - This logically groups the embeddings for each head, but they are still
-        #       interleaved in memory.
-        #
-        # 3.  `.transpose(1, 2)`
-        #     - This is the crucial step. We swap the sequence length dimension (T) with
-        #       the number of heads dimension (nh).
-        #     - New shape: `(B, nh, T, hs)`
-        #     - Why? The `scaled_dot_product_attention` function expects the heads to
-        #       be in the "batch" dimension. By rearranging the tensor this way, we
-        #       create a batch of `B * nh` attention problems, each of size `(T, hs)`.
-        #       PyTorch's optimized kernel can then process all these heads in parallel,
-        #       which is massively faster than looping through them.
-        #
-        # The same transformation is applied to `q` and `v`, preparing them for the
-        # batched attention calculation.
+        # (Content omitted for brevity, same as original)
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
+        # [INJECTOR: KV CACHING FOR EFFICIENT INFERENCE]
+        # During autoregressive generation, the self-attention mechanism would re-compute
+        # the Key (K) and Value (V) matrices for all previous tokens at every single step.
+        # The KV cache stores these matrices, transforming the computation from O(T^2)
+        # to O(T) during generation and leading to a massive speedup.
+        if kv_cache is not None:
+            past_k, past_v = kv_cache
+            k = torch.cat((past_k, k), dim=2)
+            v = torch.cat((past_v, v), dim=2)
+
+        # is_causal=True is only needed for the initial prompt processing pass.
+        # When generating token by token with a KV cache, causality is implicit.
+        use_causal_mask = kv_cache is None
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=use_causal_mask)
         if kv_cache is not None:
             past_k, past_v = kv_cache
             k = torch.cat((past_k, k), dim=-2)
@@ -193,11 +174,11 @@ class CausalSelfAttention(nn.Module):
         y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=kv_cache is None)
 
         # Re-assemble all head outputs side by side
-        # (B, nh, T, hs) -> (B, T, nh, hs) -> (B, T, C)
         y = y.transpose(1, 2).contiguous().view(B, T, C)
 
         # Output projection
         y = self.resid_dropout(self.c_proj(y))
+        return y, (k, v)
         return y, present_kv
 
 class Block(nn.Module):
@@ -360,6 +341,8 @@ class GPT(nn.Module):
         # Transformer blocks
         new_kv_caches = []
         for i, block in enumerate(self.transformer.h):
+            kv_cache = kv_caches[i] if kv_caches else None
+            x, new_kv_cache = block(x, kv_cache=kv_cache)
             x, new_kv_cache = block(x, kv_caches[i] if kv_caches else None)
             new_kv_caches.append(new_kv_cache)
 
@@ -377,6 +360,19 @@ class GPT(nn.Module):
     @torch.no_grad()
     def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_p: float = 0.9) -> torch.Tensor:
         """
+        Autoregressively generates a sequence of tokens using top-p (nucleus) sampling and a KV cache.
+        """
+        self.eval()
+        kv_caches = None
+        # First, process the prompt (if any)
+        if idx.size(1) > 1:
+            logits, _, kv_caches = self(idx[:, :-1])
+            idx_next = idx[:, -1:]
+        else:
+            idx_next = idx
+
+        for _ in range(max_new_tokens):
+            logits, _, kv_caches = self(idx_next, kv_caches=kv_caches)
         Autoregressively generates a sequence of tokens using top-p (nucleus) sampling with KV caching.
         """
         self.eval()

@@ -138,5 +138,6 @@ cython_debug/
 
 # Training artifacts and model checkpoints
 /training/checkpoints/
+out-*/
 /out/
 /out-*/
