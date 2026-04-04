@@ -122,6 +122,14 @@ class Trainer:
         model_config.vocab_size = data_manager.vocab_size
         self.model = GPT(model_config).to(self.device)
 
+        # Ensure training config values are numeric
+        tcfg = self.config['training']
+        for key in ['learning_rate', 'min_lr', 'weight_decay', 'warmup_iters', 'lr_decay_iters', 'max_steps']:
+            if key in tcfg:
+                tcfg[key] = float(tcfg[key]) if 'iters' not in key and 'steps' not in key else int(float(tcfg[key]))
+
+        # Initialize model and optimizer
+        self.model = self._build_model()
         # Initialize optimizer
         self.optimizer = self._build_optimizer()
 
@@ -203,6 +211,14 @@ class Trainer:
         return GPT(gpt_config).to(self.device)
 
     def _build_optimizer(self) -> torch.optim.Optimizer:
+        """
+        Delegates optimizer construction to the model itself.
+        """
+        train_cfg = self.config['training']
+        return self.model.configure_optimizers(
+            weight_decay=train_cfg['weight_decay'],
+            learning_rate=train_cfg['learning_rate'],
+            betas=(train_cfg['beta1'], train_cfg['beta2'])
         """Builds the AdamW optimizer with weight decay.
         Returns:
             The configured AdamW optimizer.

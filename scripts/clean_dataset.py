@@ -1,12 +1,15 @@
+
 import os
+import sys
 import argparse
 
-# Define cleaning constants
-# Whitelist of characters: allows letters, numbers, basic punctuation, and whitespace.
-ALLOWED_CHARS = re.compile(r'[^a-zA-Z0-9\s.,?!\'"()-]')
-REPEATED_WHITESPACE = re.compile(r'[ \t]+')
-REPEATED_NEWLINES = re.compile(r'\n{3,}')
+# Add project root to the Python path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+from processing import CleaningPipeline
+
+# Blacklist for common Indonesian gambling ad keywords.
+GAMBLING_AD_KEYWORDS = [
 # Blacklist for common noise and ads.
 # These are case-insensitive.
 NOISE_KEYWORDS = [
@@ -17,6 +20,13 @@ NOISE_KEYWORDS = [
     "favorite stories unfold"
 ]
 
+def run_cleaning(raw_dir, cleaned_dir):
+    """
+    Walks the raw data directory, cleans files using the modular CleaningPipeline,
+    and saves them to the cleaned directory.
+    """
+    print(f"Starting modular cleaning process from '{raw_dir}' to '{cleaned_dir}'...\n")
+    pipeline = CleaningPipeline(blacklist_keywords=GAMBLING_AD_KEYWORDS)
 def clean_content(content):
     """
     Cleans the text content by removing non-allowed characters, normalizing
@@ -87,6 +97,7 @@ def run_cleaning(raw_dir, cleaned_dir):
                     # 1. Filter out paragraphs with noise
                     content = q_filter.filter_paragraphs(content)
 
+                    cleaned_content = pipeline.process(raw_content)
                     # 2. Normalize text
                     content = normalizer.normalize(content)
 
@@ -114,6 +125,7 @@ def run_cleaning(raw_dir, cleaned_dir):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
+        description="Modularly clean raw text files and save them to a new directory."
         description="Clean raw text files using modular processing components."
     )
     parser.add_argument(

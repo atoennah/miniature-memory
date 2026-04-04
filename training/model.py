@@ -38,6 +38,8 @@ import yaml
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from typing import Optional, Tuple, Dict, List
+from dataclasses import dataclass
 from typing import Optional, Tuple, List
 from typing import Optional, Tuple, Self
 
@@ -72,7 +74,15 @@ from typing import Optional, Tuple, Self
 # active, self-aware component of the model, which is a significant step towards a
 # more robust and philosophically sound codebase.
 
+@dataclass
 class GPTConfig:
+    """Configuration for the GPT model."""
+    vocab_size: int
+    block_size: int
+    n_layer: int
+    n_head: int
+    n_embd: int
+    dropout: float
     """
     A robust, self-validating configuration class for the GPT model.
 
@@ -260,6 +270,18 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
 
+        # Head size
+        hs = C // self.n_head
+        k = k.view(B, T, self.n_head, hs).transpose(1, 2) # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, hs).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, hs).transpose(1, 2) # (B, nh, T, hs)
+
+        if kv_cache is not None:
+            prev_k, prev_v = kv_cache
+            k = torch.cat([prev_k, k], dim=2)
+            v = torch.cat([prev_v, v], dim=2)
+
+        new_kv_cache = (k, v)
         # Reshape to (B, nh, T, hs)
         if past_kv is not None:
             # [INJECTOR: THE MECHANICS OF THE KV CACHE]
@@ -384,6 +406,9 @@ class CausalSelfAttention(nn.Module):
         is_causal = (T > 1) and (kv_cache is None)
 
         # Causal self-attention using PyTorch's fused kernel
+        # is_causal=True is only valid if we are not using KV-cache or if T > 1.
+        # When T=1 (generation with cache), causal mask is irrelevant as we only attend to the past.
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=(T > 1))
         y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=is_causal)
         if past_key_value is not None:
             pk, pv = past_key_value
@@ -542,6 +567,12 @@ class Block(nn.Module):
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = FeedForward(config)
 
+    def forward(self, x: torch.Tensor, kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
+        """Forward pass for a Transformer block."""
+        attn_out, new_kv_cache = self.attn(self.ln_1(x), kv_cache=kv_cache)
+        x = x + attn_out
+        x = x + self.mlp(self.ln_2(x))
+        return x, new_kv_cache
     def forward(self, x: torch.Tensor, kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """Forward pass for a Transformer block with KV-cache support."""
         attn_out, new_kv_cache = self.attn(self.ln_1(x), kv_cache)
@@ -703,6 +734,7 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
+    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None, kv_caches: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor], List[Tuple[torch.Tensor, torch.Tensor]]]:
     def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None, kv_cache: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor], List[Tuple[torch.Tensor, torch.Tensor]]]:
         """Forward pass for the GPT model, supporting stateful KV-caching."""
         b, t = idx.size()
@@ -787,6 +819,13 @@ class GPT(nn.Module):
         """
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
+
+        if kv_caches is not None:
+            # When using KV cache, we only process the last token's position
+            current_pos = kv_caches[0][0].size(2)
+            pos = self.pos[:, current_pos:current_pos+t]
+        else:
+            pos = self.pos[:, :t]
 
         # Determine the starting position for positional embeddings
         start_pos = 0
@@ -876,6 +915,11 @@ class GPT(nn.Module):
             x, new_cache = block(x, kv_cache=kv_cache[i] if kv_cache else None)
             present_kv_cache.append(new_cache)
         # Transformer blocks
+        new_kv_caches = []
+        for i, block in enumerate(self.transformer.h):
+            layer_kv_cache = kv_caches[i] if kv_caches is not None else None
+            x, new_cache = block(x, kv_cache=layer_kv_cache)
+            new_kv_caches.append(new_cache)
         for i, block in enumerate(self.transformer.h):
             past_kv = past_kv_cache[i] if past_kv_cache is not None else None
             x, present_kv = block(x, past_kv)
@@ -894,6 +938,42 @@ class GPT(nn.Module):
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
+        return logits, loss, new_kv_caches
+
+    def configure_optimizers(self, weight_decay, learning_rate, betas):
+        """
+        Sophisticated optimizer configuration.
+        Separates parameters into decay and no-decay groups.
+        """
+        # Ensure numeric types
+        learning_rate = float(learning_rate)
+        weight_decay = float(weight_decay)
+        betas = (float(betas[0]), float(betas[1]))
+
+        # start with all of the candidate parameters
+        param_dict = {pn: p for pn, p in self.named_parameters()}
+        # filter out those that do not require grad
+        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+        # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
+        # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
+        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+        optim_groups = [
+            {'params': decay_params, 'weight_decay': weight_decay},
+            {'params': nodecay_params, 'weight_decay': 0.0}
+        ]
+        num_decay_params = sum(p.numel() for p in decay_params)
+        num_nodecay_params = sum(p.numel() for p in nodecay_params)
+        print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
+        print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
+        # Create AdamW optimizer and use the fused version if it is available
+        fused_available = 'fused' in torch.optim.AdamW.__init__.__code__.co_varnames
+        use_fused = fused_available and torch.cuda.is_available()
+        extra_args = dict(fused=True) if use_fused else dict()
+        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas, **extra_args)
+        print(f"using fused AdamW: {use_fused}")
+
+        return optimizer
         return logits, loss, next_key_values
         return logits, loss, new_past_key_values
         return logits, loss, next_past_key_values
@@ -904,6 +984,17 @@ class GPT(nn.Module):
     @torch.no_grad()
     def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_p: float = 0.9) -> torch.Tensor:
         """
+        Autoregressively generates a sequence of tokens using top-p (nucleus) sampling and KV-cache.
+        """
+        self.eval()
+        kv_caches = None
+        for i in range(max_new_tokens):
+            # If we have cache, we only pass the last token
+            if kv_caches is not None:
+                idx_cond = idx[:, -1:]
+            else:
+                idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+
         Autoregressively generates a sequence of tokens using KV-cache for O(N) complexity.
         """
         self.eval()
@@ -1069,6 +1160,12 @@ class GPT(nn.Module):
             sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
             sorted_indices_to_remove[..., 0] = 0
 
+            # This part is a bit tricky for batch > 1 if top_p is different or
+            # if we want to be fully vectorized. The current implementation
+            # is mostly vectorized for the same top_p across batch.
+            for b in range(idx.size(0)):
+                to_remove = sorted_indices[b][sorted_indices_to_remove[b]]
+                probs[b, to_remove] = 0
             # Apply the mask (handling potential batch dimension)
             for b in range(probs.size(0)):
                 indices_to_remove = sorted_indices[b, sorted_indices_to_remove[b]]

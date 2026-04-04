@@ -35,6 +35,11 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     # Use a dummy vocab_size for benchmark purposes
     vocab_size = 512
 
+    model_cfg = config_data['model']
+    train_cfg = config_data['training']
+
+    config = GPTConfig(
+        vocab_size=vocab_size,
     # Support both flat and nested config for robustness
     model_cfg = config_data.get('model', config_data)
     train_cfg = config_data.get('training', config_data)
@@ -74,6 +79,7 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
         n_layer=model_cfg['n_layer'],
         n_head=model_cfg['n_head'],
         n_embd=model_cfg['n_embd'],
+        dropout=model_cfg['dropout']
         dropout=model_cfg.get('dropout', 0.0)
         block_size=config_data['model']['block_size'],
         n_layer=config_data['model']['n_layer'],
@@ -92,6 +98,8 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     model.eval() # Set to eval mode to disable dropout for benchmark
 
     # Generate dummy data
+    batch_size = train_cfg['batch_size']
+    block_size = model_cfg['block_size']
     batch_size = train_cfg.get('batch_size', 1)
     block_size = model_cfg['block_size']
     dummy_input = torch.randint(0, vocab_size, (batch_size, block_size)).to(device)

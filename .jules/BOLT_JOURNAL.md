@@ -39,6 +39,17 @@ Entries in this journal must follow the format of a scientific paper or a concis
 
 ---
 
+## 2024-02-02: KV-Cache Optimization & Modular Refactor
+
+-   **Hypothesis:** Implementing a Key-Value (KV) cache for autoregressive generation will reduce temporal complexity from $O(N^2)$ to $O(N)$, significantly increasing generation throughput.
+-   **Methodology:** Developed a `benchmark_gen.py` utility to measure tokens per second for a fixed generation task. Compared the baseline (stateless generation) against the experimental (stateful KV-cache) implementation.
+-   **Results:**
+    -   **Baseline Throughput:** 133.07 tokens/sec
+    -   **Optimized Throughput:** 238.30 tokens/sec
+    -   **Improvement:** ~1.79x speedup in a CPU-only environment.
+-   **Conclusion:** The hypothesis is confirmed. KV-caching is a foundational optimization for autoregressive inference.
+-   **Philosophical Note:** The refactor also included a transition from monolithic data processing to a modular `processing/` package, adhering to the Single Responsibility Principle and improving the "Ontological Clarity" of the system.
+-   **Architectural Note:** Encapsulated optimizer construction within the `GPT` class (`configure_optimizers`), ensuring the model remains the sole authority over its parameter groups and decay strategies (Teleological Alignment).
 ## 2024-07-25: Empirical Optimization of KV-Cache and Data Pipeline
 
 - **Hypothesis:** Restoring the KV-cache will reduce generation complexity from $O(N^2)$ to $O(N)$, significantly improving throughput for long sequences. Vectorizing the data loader will reduce the bottleneck in the training loop.

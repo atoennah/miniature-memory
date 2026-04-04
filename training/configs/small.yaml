@@ -1,10 +1,30 @@
+# Small configuration for testing
 # Bolt's Optimized Config for Micro-Training
 data:
   path: 'dataset/processed/train.txt'
 model:
+  block_size: 256
   n_layer: 6
   n_head: 6
   n_embd: 384
+  dropout: 0.2
+
+training:
+  batch_size: 64
+  learning_rate: 1e-3
+  min_lr: 1e-4
+  warmup_iters: 100
+  lr_decay_iters: 5000
+  max_steps: 5000
+  eval_interval: 250
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.99
+  output_dir: 'training/checkpoints'
+  decay_lr: True
+
+data:
+  path: 'dataset/processed/train.txt'
   block_size: 256
   dropout: 0.1
   block_size: 256  # context of up to 256 previous characters
