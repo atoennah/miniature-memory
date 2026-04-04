@@ -35,6 +35,39 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     # Use a dummy vocab_size for benchmark purposes
     vocab_size = 512
 
+    # Support both flat and nested config for robustness
+    model_cfg = config_data.get('model', config_data)
+    train_cfg = config_data.get('training', config_data)
+
+    config = GPTConfig(
+        vocab_size=vocab_size,
+        block_size=model_cfg['block_size'],
+        n_layer=model_cfg['n_layer'],
+        n_head=model_cfg['n_head'],
+        n_embd=model_cfg['n_embd'],
+        dropout=model_cfg['dropout']
+    # Support both flat and nested configuration formats
+    model_cfg = config_data.get('model', config_data)
+    train_cfg = config_data.get('training', config_data)
+
+    config = GPTConfig(
+        vocab_size=vocab_size,
+        block_size=model_cfg['block_size'],
+        n_layer=model_cfg['n_layer'],
+        n_head=model_cfg['n_head'],
+        n_embd=model_cfg['n_embd'],
+        dropout=model_cfg['dropout']
+    # Support both nested and flat config structures
+    model_config = config_data.get('model', config_data)
+    train_config = config_data.get('training', config_data)
+
+    config = GPTConfig(
+        vocab_size=vocab_size,
+    model_config = config_data['model']
+    config = GPTConfig(
+        vocab_size=vocab_size,
+    training_config = config_data['training']
+
     config = GPTConfig(
         vocab_size=vocab_size,
         block_size=model_cfg['block_size'],
@@ -42,6 +75,16 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
         n_head=model_cfg['n_head'],
         n_embd=model_cfg['n_embd'],
         dropout=model_cfg.get('dropout', 0.0)
+        block_size=config_data['model']['block_size'],
+        n_layer=config_data['model']['n_layer'],
+        n_head=config_data['model']['n_head'],
+        n_embd=config_data['model']['n_embd'],
+        dropout=config_data['model']['dropout']
+        block_size=model_config['block_size'],
+        n_layer=model_config['n_layer'],
+        n_head=model_config['n_head'],
+        n_embd=model_config['n_embd'],
+        dropout=model_config['dropout']
     )
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -53,6 +96,19 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     block_size = model_cfg['block_size']
     dummy_input = torch.randint(0, vocab_size, (batch_size, block_size)).to(device)
     dummy_target = torch.randint(0, vocab_size, (batch_size, block_size)).to(device)
+    batch_size = train_cfg['batch_size']
+    block_size = model_cfg['block_size']
+    batch_size = config_data['training']['batch_size']
+    block_size = config_data['model']['block_size']
+    batch_size = train_config['batch_size']
+    batch_size = training_config['batch_size']
+    batch_size = config_data['training']['batch_size']
+    block_size = config_data['model']['block_size']
+    batch_size = training_config['batch_size']
+    batch_size = config_data['training']['batch_size']
+    block_size = model_config['block_size']
+    dummy_input = torch.randint(0, vocab_size, (batch_size, block_size))
+    dummy_target = torch.randint(0, vocab_size, (batch_size, block_size))
 
     # Benchmark settings
     num_steps = 20
@@ -64,6 +120,8 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     for _ in range(warmup_steps):
         with torch.no_grad():
             _, _, _ = model(dummy_input, dummy_target)
+        # The forward pass now returns a third value, the kv_cache, which is not needed for this benchmark.
+        _, _, _ = model(dummy_input, dummy_target)
 
     # Benchmark phase
     torch.cuda.synchronize() if device == 'cuda' else None
@@ -74,6 +132,7 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
             _, _, _ = model(dummy_input, dummy_target)
 
     torch.cuda.synchronize() if device == 'cuda' else None
+        _, _, _ = model(dummy_input, dummy_target)
     end_time = time.time()
 
     peak_memory = process.memory_info().rss / (1024 * 1024) # MB
