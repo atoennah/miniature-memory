@@ -34,13 +34,52 @@ A minimal, from-scratch GPT model implementation.
 Based on Andrej Karpathy's NanoGPT: https://github.com/karpathy/nanogpt
 """
 import math
+import yaml
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Self
+
+# [INJECTOR: THE PHILOSOPHY OF A SELF-AWARE CONFIGURATION]
+#
+# A simple configuration class can easily become a source of "conceptual rot". When
+# parameters are just attributes on a class, there is no single source of truth, no
+# validation, and no guarantee of reproducibility. This refactored `GPTConfig` class
+# addresses this by adhering to several first principles:
+#
+# 1.  Memory Efficiency: By using `__slots__`, we tell Python not to use a `__dict__`
+#     for each instance. This significantly reduces the memory footprint of the object,
+#     which is a critical consideration in a resource-constrained environment. While
+#     it also prevents the addition of new attributes at runtime (a form of weak
+#     immutability), its primary philosophical justification here is efficiency.
+#
+# 2.  The Principle of Least Astonishment: The configuration should behave as expected.
+#     The `from_yaml` and `to_yaml` methods provide a clear, explicit contract for
+#     serialization and deserialization. This is less astonishing than passing around
+# more    raw dictionaries.
+#
+# 3.  Self-Validation as a Necessity: A configuration should know what is valid. The
+#     `__post_init__` method performs critical assertions (e.g., `n_embd` must be
+#     divisible by `n_head`). This prevents the creation of invalid model states and
+#     surfaces errors early, close to the source.
+#
+# 4.  Reproducibility as a Goal: By providing a canonical way to save and load the
+#     model's hyperparameters, we make it trivial to reproduce experiments and to
+#     archive the exact configuration that was used to train a given model checkpoint.
+#
+# This approach transforms the configuration from a passive data container into an
+# active, self-aware component of the model, which is a significant step towards a
+# more robust and philosophically sound codebase.
 
 class GPTConfig:
-    """Configuration for the GPT model."""
+    """
+    A robust, self-validating configuration class for the GPT model.
+
+    This class manages the model's hyperparameters and provides methods for
+    serialization to and from YAML, ensuring reproducibility and clarity.
+    """
+    __slots__ = ('vocab_size', 'block_size', 'n_layer', 'n_head', 'n_embd', 'dropout')
+
     def __init__(self, vocab_size: int, block_size: int, n_layer: int, n_head: int, n_embd: int, dropout: float):
         self.vocab_size = vocab_size
         self.block_size = block_size
@@ -48,6 +87,47 @@ class GPTConfig:
         self.n_head = n_head
         self.n_embd = n_embd
         self.dropout = dropout
+        self.__post_init__()
+
+    def __post_init__(self):
+        """Validate the configuration after initialization."""
+        if self.n_embd % self.n_head != 0:
+            raise ValueError(f"Embedding dimension n_embd ({self.n_embd}) must be divisible by n_head ({self.n_head})")
+
+    @classmethod
+    def from_yaml(cls, path: str) -> Self:
+        """Load configuration from a YAML file."""
+        with open(path, 'r') as f:
+            config_dict = yaml.safe_load(f)
+
+        # We assume the config is nested under a 'model' key.
+        model_config = config_dict.get('model')
+        if model_config is None:
+            raise ValueError(f"YAML file '{path}' must contain a 'model' key.")
+
+        return cls(**model_config)
+
+    def to_yaml(self, path: str) -> None:
+        """Save configuration to a YAML file."""
+        # Nest the config under a 'model' key for consistency.
+        config_dict = {'model': self.to_dict()}
+        with open(path, 'w') as f:
+            yaml.dump(config_dict, f, indent=4)
+
+    def to_dict(self) -> dict:
+        """Convert the configuration to a dictionary."""
+        return {
+            'vocab_size': self.vocab_size,
+            'block_size': self.block_size,
+            'n_layer': self.n_layer,
+            'n_head': self.n_head,
+            'n_embd': self.n_embd,
+            'dropout': self.dropout
+        }
+
+    def __repr__(self) -> str:
+        return f"GPTConfig({', '.join(f'{k}={v}' for k, v in self.to_dict().items())})"
+
 
 class FeedForward(nn.Module):
     # [INJECTOR: THE ROLE OF THE FEED-FORWARD NETWORK]
