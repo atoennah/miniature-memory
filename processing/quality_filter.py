@@ -1,27 +1,4 @@
 
-from typing import List
-
-class QualityFilter:
-    """
-    Filters out content that doesn't meet quality standards (e.g., ads, noise).
-    """
-    def __init__(self, blacklist_keywords: List[str] = None):
-        self.blacklist_keywords = blacklist_keywords or []
-
-    def filter_paragraphs(self, text: str) -> str:
-        """
-        Splits text into paragraphs and removes those containing blacklisted keywords.
-        """
-        if not self.blacklist_keywords:
-            return text
-
-        paragraphs = text.split('\n')
-        cleaned_paragraphs = []
-        for p in paragraphs:
-            if not any(keyword.lower() in p.lower() for keyword in self.blacklist_keywords):
-                cleaned_paragraphs.append(p)
-
-        return "\n".join(cleaned_paragraphs)
 from typing import List, Set
 
 class QualityFilter:
@@ -33,14 +10,8 @@ class QualityFilter:
         "ada", "dari", "saya", "untuk", "pada", "sudah", "bisa", "akan"
     }
 
-    NOISE_KEYWORDS: List[str] = [
-        "slot gacor", "judi online", "daftar segera", "bonus new member",
-        "zeus", "pragmatic play", "agen bola", "togel",
-        "wattpad", "read socially", "write stories", "get updates",
-        "receive real-time notifications", "inline commenting"
-    ]
-
-    def __init__(self, min_stop_word_count: int = 5):
+    def __init__(self, blacklist_keywords: List[str] = None, min_stop_word_count: int = 5):
+        self.blacklist_keywords = blacklist_keywords or []
         self.min_stop_word_count = min_stop_word_count
 
     def is_indonesian(self, text: str) -> bool:
@@ -56,7 +27,7 @@ class QualityFilter:
         Checks if the text contains blacklisted keywords or promotional boilerplate.
         """
         text_lower = text.lower()
-        return any(keyword in text_lower for keyword in self.NOISE_KEYWORDS)
+        return any(keyword.lower() in text_lower for keyword in self.blacklist_keywords)
 
     def filter_paragraphs(self, text: str) -> str:
         """

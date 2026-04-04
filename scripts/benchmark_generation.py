@@ -6,30 +6,25 @@ import torch
 import yaml
 from typing import List
 
-# Add project root to the Python path
-import time
-import torch
-import sys
-import os
-
 # Ensure the root directory is in the python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from training.model import GPT, GPTConfig
 
-def benchmark_generation(model, device, num_tokens: int, prompt_length: int):
+def run_benchmark(model, device, num_tokens: int, prompt_length: int):
     idx = torch.randint(0, model.config.vocab_size, (1, prompt_length), device=device)
 
     # Warmup
-    model.generate(idx, max_new_tokens=10)
+    _ = model.generate(idx, max_new_tokens=10)
 
-    torch.cuda.synchronize() if torch.cuda.is_available() else None
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+
     start_time = time.time()
-
     with torch.no_grad():
-        model.generate(idx, max_new_tokens=num_tokens)
-
-    torch.cuda.synchronize() if torch.cuda.is_available() else None
+        _ = model.generate(idx, max_new_tokens=num_tokens)
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
     end_time = time.time()
 
     duration = end_time - start_time
@@ -40,15 +35,9 @@ def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Benchmarking on {device}")
 
-    # Configuration (Small model)
-    # We use a larger block_size to demonstrate O(T) scaling without hitting the cache reset limit.
-    config = GPTConfig(
-        vocab_size=50257, # Standard GPT-2 vocab size for testing
-        block_size=1024,
-def benchmark_generation():
     config = GPTConfig(
         vocab_size=50257,
-        block_size=512,
+        block_size=1024,
         n_layer=6,
         n_head=6,
         n_embd=384,
@@ -65,29 +54,8 @@ def benchmark_generation():
     print("-" * 42)
 
     for length in test_lengths:
-        tps = benchmark_generation(model, device, num_new_tokens, length)
+        tps = run_benchmark(model, device, num_new_tokens, length)
         print(f"{length:<12} | {num_new_tokens:<12} | {tps:<12.2f}")
 
 if __name__ == "__main__":
     main()
-    model = GPT(config)
-    model.eval()
-
-    idx = torch.randint(0, 50257, (1, 1))
-    max_new_tokens = 200
-
-    # Warmup
-    print("Warming up...")
-    _ = model.generate(idx, max_new_tokens=20)
-
-    print(f"Benchmarking generation of {max_new_tokens} tokens...")
-    start = time.time()
-    _ = model.generate(idx, max_new_tokens=max_new_tokens)
-    end = time.time()
-
-    total_time = end - start
-    tps = max_new_tokens / total_time
-    print(f"Generation throughput: {tps:.2f} tokens/sec")
-
-if __name__ == "__main__":
-    benchmark_generation()
