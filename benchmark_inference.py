@@ -147,6 +147,8 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     # Use a dummy vocab_size for benchmark purposes
     vocab_size = 512
 
+    # In the benchmark config, 'model' is a top-level key.
+    model_config = config_data['model']
     model_config = config_data['model']
     # In a real scenario, this would come from the tokenizer
     vocab_size = 512
@@ -168,6 +170,11 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     )
 
     model = GPT(config)
+    model.eval() # Set to eval mode for inference
+
+    # Generate a dummy prompt
+    batch_size = config_data['training']['batch_size']
+    prompt = torch.randint(0, vocab_size, (batch_size, 1))
     model.eval()
 
     # Generate dummy data
@@ -202,6 +209,20 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     # Benchmark settings
     max_new_tokens = 100
     warmup_steps = 2
+    num_steps = 5
+
+    # Warmup phase
+    print("Running warmup...")
+    for _ in range(warmup_steps):
+        _ = model.generate(prompt, max_new_tokens=max_new_tokens)
+    print("Warmup complete.")
+
+    # Benchmark phase
+    print("\nRunning benchmark...")
+    start_time = time.time()
+    for i in range(num_steps):
+        print(f"Step {i+1}/{num_steps}...")
+        _ = model.generate(prompt, max_new_tokens=max_new_tokens)
 
     # Warmup phase
     print("Warming up...")
@@ -276,6 +297,16 @@ if __name__ == "__main__":
 
     # Calculate throughput
     total_time = end_time - start_time
+    tokens_per_step = batch_size * max_new_tokens
+    total_tokens_generated = num_steps * tokens_per_step
+    tokens_per_second = total_tokens_generated / total_time
+
+    print(f"\n--- Inference Benchmark Results ---")
+    print(f"Configuration: {config_path}")
+    print(f"Steps: {num_steps}")
+    print(f"Batch Size: {batch_size}")
+    print(f"New Tokens per Step: {max_new_tokens}")
+    print(f"Total Tokens Generated: {total_tokens_generated}")
     total_generated_tokens = num_runs * max_new_tokens
     tokens_per_second = total_generated_tokens / total_time
 

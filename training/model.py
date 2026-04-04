@@ -219,6 +219,12 @@ class CausalSelfAttention(nn.Module):
     def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
         Forward pass for the causal self-attention module.
+        Args:
+            x: Input tensor of shape (B, T, C).
+            past_kv: A tuple containing the past key and value tensors, used for caching.
+        Returns:
+            A tuple containing the output tensor and the new key-value cache.
+        """
         Supports an optional key-value cache for efficient inference.
         """
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
@@ -227,7 +233,50 @@ class CausalSelfAttention(nn.Module):
         B, T, C = x.size()
 
         q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
 
+        if past_kv is not None:
+            # [INJECTOR: THE MECHANICS OF THE KV CACHE]
+            #
+            # The Key-Value (KV) cache is a critical optimization for fast autoregressive
+            # inference. During the generation of a new token, the self-attention mechanism
+            # needs to compute attention scores between the new token's Query (Q) and the
+            # Keys (K) of ALL previous tokens in the sequence.
+            #
+            # Without a cache:
+            # To generate token T, we must re-compute the K and V vectors for all tokens
+            # from 1 to T-1. This is incredibly wasteful, as these vectors do not change.
+            #
+            # With a cache:
+            # 1.  On the first pass (the "prefill"), we process the entire prompt and
+            #     calculate the K and V tensors for all input tokens. We then save
+            #     (cache) these tensors.
+            # 2.  On subsequent passes (generating one new token at a time), we only
+            #     pass the *single new token* through the projection layers to get its
+            #     q, k, and v vectors.
+            # 3.  We then retrieve the cached K and V tensors from the previous step and
+            #     concatenate the new k and v vectors to them.
+            #
+            # `k = torch.cat((past_k, k), dim=-2)`
+            #
+            # This means the attention mechanism receives a query for just one token, but
+            # it gets the keys and values for the *entire* sequence history. This avoids
+            # redundant computation and changes the complexity of attention from O(T^2)
+            # at each step to O(T), resulting in a massive speedup for generation.
+            past_k, past_v = past_kv
+            k = torch.cat((past_k, k), dim=-2)
+            v = torch.cat((past_v, v), dim=-2)
+
+        # When using the cache, we are processing one token at a time, so causal masking is not needed.
+        # The training path (where past_kv is None) still requires it.
+        is_causal = past_kv is None
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=is_causal)
+
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
+        y = self.resid_dropout(self.c_proj(y))
+        return y, (k, v)
         # [INJECTOR: DEMYSTIFYING MULTI-HEAD TENSOR MANIPULATION]
         #
         # The core idea of multi-head attention is to run the attention mechanism in
@@ -412,6 +461,15 @@ class Block(nn.Module):
     def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
         Forward pass for a Transformer block.
+        Args:
+            x: Input tensor.
+            past_kv: A tuple containing the past key and value tensors for the attention layer.
+        Returns:
+            A tuple containing the output tensor and the new key-value cache.
+        """
+        attn_output, kv_cache = self.attn(self.ln_1(x), past_kv=past_kv)
+        x = x + attn_output
+        x = x + self.mlp(self.ln_2(x))
         Includes support for a key-value cache.
         """
         attn_output, present_kv = self.attn(self.ln_1(x), past_kv=past_kv)
@@ -535,6 +593,24 @@ class GPT(nn.Module):
     def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None, past_kv_cache: Optional[list] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[list]]:
         """
         Forward pass for the GPT model.
+        Args:
+            idx: Input tensor of token indices.
+            targets: Optional target tensor for loss calculation.
+            past_kv_cache: A list containing the past key-value tuples for each layer.
+        Returns:
+            A tuple containing logits, loss (if targets are provided), and the new KV cache.
+        """
+        b, t = idx.size()
+        assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
+
+        # During inference with a KV cache, we are processing one token at a time.
+        # The position embedding needs to be calculated for the current token's position,
+        # not just from the start of the sequence.
+        start_pos = 0
+        if past_kv_cache is not None and past_kv_cache[0] is not None:
+            start_pos = past_kv_cache[0][0].shape[-2] # Get sequence length from the cached K tensor
+        pos = self.pos[:, start_pos : start_pos + t]
+
         Supports an optional key-value cache for efficient inference.
         """
         b, t = idx.size()
@@ -583,6 +659,11 @@ class GPT(nn.Module):
         tok_emb = self.transformer.wte(idx)
         x = self.transformer.drop(tok_emb + pos_emb)
 
+        new_kv_cache = []
+        for i, block in enumerate(self.transformer.h):
+            past_kv = past_kv_cache[i] if past_kv_cache is not None else None
+            x, kv = block(x, past_kv=past_kv)
+            new_kv_cache.append(kv)
         present_kv_cache = []
         if past_kv_cache is None:
             past_kv_cache = [None] * len(self.transformer.h)
@@ -613,6 +694,7 @@ class GPT(nn.Module):
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
+        return logits, loss, new_kv_cache
         return logits, loss, present_kv_cache
         return logits, loss, new_kv_caches
 
@@ -620,6 +702,21 @@ class GPT(nn.Module):
     def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_p: float = 0.9) -> torch.Tensor:
         """
         Autoregressively generates a sequence of tokens using top-p (nucleus) sampling
+        and a Key-Value (KV) cache for performance.
+        """
+        self.eval()
+        past_kv_cache = None
+
+        # Prefill the KV cache with the prompt
+        if idx.size(1) > 1:
+            prompt_tokens = idx[:, :-1]
+            _, _, past_kv_cache = self(prompt_tokens, past_kv_cache=None)
+            idx_current = idx[:, -1:]
+        else:
+            idx_current = idx
+
+        for _ in range(max_new_tokens):
+            logits, _, past_kv_cache = self(idx_current, past_kv_cache=past_kv_cache)
         and a key-value cache for performance.
         """
         self.eval()
@@ -698,10 +795,12 @@ class GPT(nn.Module):
             sorted_indices_to_remove[..., 0] = 0
             indices_to_remove = sorted_indices[sorted_indices_to_remove]
             probs[:, indices_to_remove] = 0
+
             probs = probs / torch.sum(probs, dim=-1, keepdim=True)
 
             idx_next = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, idx_next), dim=1)
+            idx_current = idx_next
 
         self.train()
         return idx
