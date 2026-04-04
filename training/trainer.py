@@ -268,6 +268,11 @@ class Trainer:
         # Sanity checks to ensure every parameter is in one of the sets
         param_dict = {pn: p for pn, p in self.model.named_parameters()}
 
+        # Filter decay/no_decay sets to only include parameters present in the model
+        # This handles weight tying where multiple names might point to the same parameter
+        # but named_parameters() only returns one of them.
+        decay = {pn for pn in decay if pn in param_dict}
+        no_decay = {pn for pn in no_decay if pn in param_dict}
         # Filter sets to only include keys that actually exist in param_dict (handles tied weights)
         decay = {pn for pn in decay if pn in param_dict}
         no_decay = {pn for pn in no_decay if pn in param_dict}
@@ -283,6 +288,7 @@ class Trainer:
         inter_params = decay & no_decay
         union_params = decay | no_decay
         assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
+        assert len(param_dict.keys() - union_params) == 0, f"Parameters not in decay/no_decay sets: {param_dict.keys() - union_params}"
         # Bolt Fix: Filter for tied weights compatibility
         decay = {pn for pn in decay if pn in param_dict}
         no_decay = {pn for pn in no_decay if pn in param_dict}

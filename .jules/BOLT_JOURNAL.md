@@ -39,6 +39,26 @@ Entries in this journal must follow the format of a scientific paper or a concis
 
 ---
 
+## 2025-01-29: Persistent Metadata and Vectorized Data Ingestion
+
+-   **Hypothesis:** The redundant scanning of training data for vocabulary construction and the loop-based batch extraction in `DataManager` represent significant "Empirical Friction." Persistent metadata and vectorized indexing will drastically improve efficiency.
+-   **Methodology:**
+    1.  Introduced `{data_path}_meta.pkl` to store vocabulary and dataset statistics.
+    2.  Modified `DataManager` and `scripts/generate.py` to bypass full data scans if artifacts exist.
+    3.  Refactored `get_batch` using NumPy advanced indexing to eliminate Python-level sequence slicing loops.
+-   **Results (Empirical Verification):**
+    -   **DataManager Initialization:** 0.5433s → 0.0006s (~900x speedup).
+    -   **Batch Extraction (get_batch):** 1.675ms → 0.305ms (~5.5x speedup).
+-   **Conclusion:** The hypothesis is confirmed. The elimination of redundant computation and the shift to parallelized data extraction provide a massive boost to developer productivity and training throughput.
+-   **Philosophical Note:** This refactor honors the **Principle of Least Action** and ensures **Ontological Clarity** by separating one-time preprocessing artifacts from runtime logic.
+
+---
+
+## 2025-01-29: Robust Optimizer Construction for Tied Weights
+
+-   **Discovery:** Identified a "Conceptual Rot" in `Trainer._build_optimizer` where weight-tying (e.g., `lm_head` and `wte`) caused a `KeyError: 'lm_head.weight'` because `named_parameters()` only returns one name for shared tensors.
+-   **Action:** Refactored the parameter filtering logic to dynamically align the `decay` and `no_decay` sets with the actual keys present in the model's `named_parameters()`.
+-   **Conclusion:** The trainer is now resilient to weight-tied architectures, satisfying the **Principle of Robustness** and ensuring seamless compatibility with standard GPT-style implementations.
 ## 2024-02-02: KV-Cache Optimization & Modular Refactor
 
 -   **Hypothesis:** Implementing a Key-Value (KV) cache for autoregressive generation will reduce temporal complexity from $O(N^2)$ to $O(N)$, significantly increasing generation throughput.

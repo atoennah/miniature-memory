@@ -56,6 +56,9 @@ wandb:
   project: 'shakespeare'
   run_name: 'mini-gpt'
 
+# Inference settings
+inference:
+  temperature: 1.0
 inference:
   temperature: 0.8
   top_p: 0.9
