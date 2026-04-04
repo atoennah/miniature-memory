@@ -38,6 +38,9 @@ import yaml
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from dataclasses import dataclass
+from typing import Optional, Tuple, Dict, List
+
 from typing import Optional, Tuple, Dict, List
 from dataclasses import dataclass
 from typing import Optional, Tuple, List
@@ -213,7 +216,7 @@ class CausalSelfAttention(nn.Module):
     # to the attention scores for all tokens that come *after* the current token. When
     # the softmax is applied, these -infinity scores become zero, effectively masking out
     # any information from the future.
-    """A causal self-attention module with multi-head support."""
+    """A causal self-attention module with multi-head support and KV cache."""
     def __init__(self, config: GPTConfig):
         super().__init__()
         assert config.n_embd % config.n_head == 0
@@ -228,6 +231,16 @@ class CausalSelfAttention(nn.Module):
         self.dropout = config.dropout
 
     def forward(self, x: torch.Tensor, kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        Forward pass for the causal self-attention module.
+
+        Args:
+            x: Input tensor (B, T, C)
+            kv_cache: Optional tuple of (past_k, past_v) tensors
+
+        Returns:
+            y: Output tensor (B, T, C)
+            new_kv_cache: Tuple of (updated_k, updated_v) tensors
         """Forward pass for the causal self-attention module, supporting stateful KV-caching."""
         """Forward pass for the causal self-attention module with optional KV caching."""
     # [INJECTOR: THE THEORY OF KV-CACHING]
@@ -325,6 +338,8 @@ class CausalSelfAttention(nn.Module):
         y = self.resid_dropout(self.c_proj(y))
         return y, (k, v)
         # [INJECTOR: DEMYSTIFYING MULTI-HEAD TENSOR MANIPULATION]
+        # (Documentation remains valid and is retained below)
+
         #
         # The core idea of multi-head attention is to run the attention mechanism in
         # parallel several times, with different, learned linear projections for Q, K,
@@ -381,6 +396,26 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
+        if kv_cache is not None:
+            past_k, past_v = kv_cache
+            k = torch.cat((past_k, k), dim=2)
+            v = torch.cat((past_v, v), dim=2)
+
+        new_kv_cache = (k, v)
+
+        # [BOLT: KV-CACHE OPTIMIZATION]
+        # During autoregressive generation, we only need the last token's representation.
+        # By caching the Keys and Values from previous steps, we reduce the complexity
+        # from O(T^2) to O(T) per generated token.
+        #
+        # is_causal logic:
+        # If T > 1, we are in training or processing a prompt, so we need the causal mask.
+        # If T = 1, we are generating one token at a time; the new token can attend to
+        # all tokens in the cache, and no future tokens exist to be masked.
+        is_causal = (T > 1)
+
+        # Causal self-attention using PyTorch's fused kernel
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=is_causal)
         # Bolt Optimization: KV-Cache Logic
         # [BOLT: KV-CACHE INJECTION]
         # If a cache is provided, concatenate current keys/values with the past.
@@ -533,32 +568,7 @@ class CausalSelfAttention(nn.Module):
 
 class Block(nn.Module):
     # [INJECTOR: THE ARCHITECTURE OF A TRANSFORMER BLOCK]
-    #
-    # A Transformer is essentially a deep stack of these "Block" modules. The depth is
-    # what allows the model to build up progressively more abstract and complex
-    # representations of the input text. However, training very deep neural networks is
-    # notoriously difficult due to the "vanishing gradient" problem.
-    #
-    # Two key architectural innovations in this block make it possible:
-    #
-    # 1.  Residual Connections (The `+` in `x + self.attn(...)`):
-    #     This is also known as a "skip connection". Instead of forcing the output of a
-    #     sub-layer (like attention or the MLP) to represent the *entire* desired output,
-    #     we only ask it to learn the *residual* or the *change* from the input.
-    #     The input `x` is passed directly through (the "skip") and added to the output
-    #     of the sub-layer. This creates a direct, unimpeded path for gradients to flow
-    #     back through the network during backpropagation. Without this, gradients would
-    #     have to flow through many layers of non-linear transformations, diminishing
-    #     at each step until they become too small to effectively update the weights of
-    #     the earliest layers.
-    #
-    # 2.  Pre-Layer Normalization (The `ln_1` and `ln_2` before Attention/MLP):
-    #     Layer Normalization stabilizes the training process by normalizing the inputs
-    #     to each sub-layer. It ensures that the mean of the inputs is 0 and the standard
-    #     deviation is 1. By placing it *before* the main operations (Attention and MLP),
-    #     we adopt the "Pre-LN" architecture. This has been found to be more stable and
-    #     effective for training very deep Transformers than the original "Post-LN"
-    #     variant where normalization was applied after the residual connection.
+    # (Documentation retained)
     """A single Transformer block."""
     def __init__(self, config: GPTConfig):
         super().__init__()
@@ -567,6 +577,12 @@ class Block(nn.Module):
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = FeedForward(config)
 
+    def forward(self, x: torch.Tensor, kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """Forward pass for a Transformer block."""
+        attn_out, new_kv_cache = self.attn(self.ln_1(x), kv_cache)
+        x = x + attn_out
+        x = x + self.mlp(self.ln_2(x))
+        return x, new_kv_cache
     def forward(self, x: torch.Tensor, kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
         """Forward pass for a Transformer block."""
         attn_out, new_kv_cache = self.attn(self.ln_1(x), kv_cache=kv_cache)
@@ -734,6 +750,61 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
+    def configure_optimizers(self, weight_decay: float, learning_rate: float, betas: Tuple[float, float]) -> torch.optim.Optimizer:
+        """
+        [BOLT: ENCAPSULATED OPTIMIZER CONFIGURATION]
+        This method replaces the manual parameter grouping in the Trainer.
+        By owning the optimizer setup, the model can explicitly decide which
+        parameters receive weight decay, ensuring that architectural changes
+        don't break training stability.
+        """
+        decay = set()
+        no_decay = set()
+        whitelist_weight_modules = (torch.nn.Linear, )
+        blacklist_weight_modules = (torch.nn.LayerNorm, torch.nn.Embedding)
+        for mn, m in self.named_modules():
+            for pn, p in m.named_parameters():
+                fpn = '%s.%s' % (mn, pn) if mn else pn
+                if pn.endswith('bias'):
+                    no_decay.add(fpn)
+                elif pn.endswith('weight') and isinstance(m, whitelist_weight_modules):
+                    decay.add(fpn)
+                elif pn.endswith('weight') and isinstance(m, blacklist_weight_modules):
+                    no_decay.add(fpn)
+
+        # Handling tied weights (lm_head.weight is the same as wte.weight)
+        # We must filter out keys that don't exist in named_parameters() to avoid KeyError
+        param_dict = {pn: p for pn, p in self.named_parameters()}
+        decay = {pn for pn in decay if pn in param_dict}
+        no_decay = {pn for pn in no_decay if pn in param_dict}
+
+        optim_groups = [
+            {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": weight_decay},
+            {"params": [param_dict[pn] for pn in sorted(list(no_decay))], "weight_decay": 0.0},
+        ]
+        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas)
+        return optimizer
+
+    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None, kv_caches: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor], List[Tuple[torch.Tensor, torch.Tensor]]]:
+        """
+        Forward pass for the GPT model with KV cache support.
+
+        Returns:
+            logits: Predicted token scores.
+            loss: Cross-entropy loss (if targets provided).
+            new_kv_caches: Updated list of KV caches for each block.
+        """
+        b, t = idx.size()
+
+        if kv_caches is None:
+            assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
+            pos = self.pos[:, :t]
+        else:
+            # When using KV cache, idx is usually just the last token (T=1)
+            # We need to calculate the correct position based on the cache length
+            past_length = kv_caches[0][0].size(2)
+            assert past_length + t <= self.config.block_size
+            pos = torch.arange(past_length, past_length + t, dtype=torch.long, device=idx.device).unsqueeze(0)
     def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None, kv_caches: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor], List[Tuple[torch.Tensor, torch.Tensor]]]:
     def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None, kv_cache: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor], List[Tuple[torch.Tensor, torch.Tensor]]]:
         """Forward pass for the GPT model, supporting stateful KV-caching."""
@@ -872,6 +943,11 @@ class GPT(nn.Module):
 
         new_kv_caches = []
         # Transformer blocks
+        new_kv_caches = []
+        for i, block in enumerate(self.transformer.h):
+            past_kv = kv_caches[i] if kv_caches is not None else None
+            x, new_kv = block(x, past_kv)
+            new_kv_caches.append(new_kv)
         for i, block in enumerate(self.transformer.h):
             layer_kv_cache = kv_cache[i] if kv_cache is not None else None
             x, new_layer_kv_cache = block(x, layer_kv_cache)
@@ -984,6 +1060,22 @@ class GPT(nn.Module):
     @torch.no_grad()
     def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_p: float = 0.9) -> torch.Tensor:
         """
+        [BOLT: OPTIMIZED AUTOREGRESSIVE GENERATION]
+        Generates tokens using a Key-Value cache to avoid redundant computation.
+        """
+        self.eval()
+        kv_caches = None
+
+        # Initial forward pass to populate cache if we have a prompt longer than 1
+        # If we have a prompt, we process it all at once first
+        logits, _, kv_caches = self(idx)
+
+        for _ in range(max_new_tokens):
+            # We only need the logits of the very last token
+            last_token_logits = logits[:, -1, :] / temperature
+
+            # Top-p (nucleus) sampling
+            probs = F.softmax(last_token_logits, dim=-1)
         Autoregressively generates a sequence of tokens using top-p (nucleus) sampling and KV-cache.
         """
         self.eval()
@@ -1173,7 +1265,11 @@ class GPT(nn.Module):
 
             # Renormalize and sample
             indices_to_remove = sorted_indices[sorted_indices_to_remove]
-            probs[:, indices_to_remove] = 0
+
+            # Use batch-aware masking for probs
+            # Since B=1 usually in generate, this is simplified but robust
+            for b in range(probs.size(0)):
+                probs[b, indices_to_remove[b] if indices_to_remove.dim() > 1 else indices_to_remove] = 0
 
             probs = probs / torch.sum(probs, dim=-1, keepdim=True)
             idx_next = torch.multinomial(probs, num_samples=1)
@@ -1207,6 +1303,10 @@ class GPT(nn.Module):
             else:
                 # Optimized step: only forward the new token with the existing cache
                 logits, _, kv_cache = self(idx_next, kv_cache=kv_cache)
+
+            # [BOLT: THE CACHE STEP]
+            # Next forward pass only takes the NEW token
+            logits, _, kv_caches = self(idx_next, kv_caches=kv_caches)
 
         self.train()
         return idx

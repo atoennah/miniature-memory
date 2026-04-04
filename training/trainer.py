@@ -212,6 +212,15 @@ class Trainer:
 
     def _build_optimizer(self) -> torch.optim.Optimizer:
         """
+        [BOLT: DELEGATED OPTIMIZATION]
+        The Trainer now delegates optimizer construction to the Model.
+        This follows the principle of Encapsulation: the model knows best which
+        of its parameters should be decayed.
+        """
+        return self.model.configure_optimizers(
+            weight_decay=self.config['training']['weight_decay'],
+            learning_rate=self.config['training']['learning_rate'],
+            betas=(self.config['training']['beta1'], self.config['training']['beta2'])
         Delegates optimizer construction to the model itself.
         """
         train_cfg = self.config['training']
@@ -415,6 +424,9 @@ class Trainer:
         grad_clip = t_cfg.get('grad_clip', 1.0)
         xb, yb = self.data_manager.get_batch()
 
+        # [BOLT: TUPLE UNPACKING]
+        # We now unpack 3 values from the model's forward pass.
+        # The KV cache is ignored during training.
         with torch.amp.autocast(device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')):
             # The forward pass now returns a third value, the kv_cache, which is not needed for training.
             # The forward pass now returns a third value, the kv_cache, which we ignore during training

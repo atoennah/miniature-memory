@@ -1,6 +1,7 @@
 # Small configuration for testing
 # Bolt's Optimized Config for Micro-Training
 data:
+  path: 'dataset/processed/train.txt' # Default path, can be overridden.
   path: 'dataset/processed/train.txt'
 model:
   block_size: 256
@@ -31,6 +32,8 @@ data:
   dropout: 0.2
   vocab_size: 50257 # Standard GPT-2 vocab size, a safe default.
 training:
+  output_dir: 'training/checkpoints'
+  eval_interval: 100
   output_dir: 'out/bolt_micro_train'
   eval_interval: 50
   log_interval: 10
@@ -46,6 +49,9 @@ training:
   lr_decay_iters: 100
   min_lr: 1.0e-4
   batch_size: 32
+  max_steps: 500
+inference:
+  temperature: 1.0
   gradient_accumulation_steps: 1
   max_steps: 100
 inference:

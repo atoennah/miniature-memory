@@ -98,6 +98,8 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     model.eval() # Set to eval mode to disable dropout for benchmark
 
     # Generate dummy data
+    batch_size = config_data['training']['batch_size']
+    block_size = config_data['model']['block_size']
     batch_size = train_cfg['batch_size']
     block_size = model_cfg['block_size']
     batch_size = train_cfg.get('batch_size', 1)
