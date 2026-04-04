@@ -175,6 +175,9 @@ class Trainer:
         # Sanity checks to ensure every parameter is in one of the sets
         param_dict = {pn: p for pn, p in self.model.named_parameters()}
 
+        # Filter sets to only include keys that actually exist in param_dict (handles tied weights)
+        decay = {pn for pn in decay if pn in param_dict}
+        no_decay = {pn for pn in no_decay if pn in param_dict}
         # Due to weight tying, 'lm_head.weight' is a name for the same parameter
         # as 'transformer.wte.weight', but only the latter is returned by
         # .named_parameters(). The optimizer logic incorrectly adds 'lm_head.weight'
@@ -187,7 +190,7 @@ class Trainer:
         inter_params = decay & no_decay
         union_params = decay | no_decay
         assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
-        assert len(param_dict.keys() - union_params) == 0, "Parameters not in decay/no_decay sets"
+        assert len(param_dict.keys() - union_params) == 0, f"Parameters not in decay/no_decay sets: {param_dict.keys() - union_params}"
 
         optim_groups = [
             {"params": [param_dict[pn] for pn in sorted(list(decay))], "weight_decay": self.config['training']['weight_decay']},

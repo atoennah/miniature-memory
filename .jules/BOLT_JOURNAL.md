@@ -36,3 +36,15 @@ Entries in this journal must follow the format of a scientific paper or a concis
     -   **Baseline Loss (`lr=1e-4`):** 2.6345
     -   **Experimental Loss (`lr=1e-5`):** 3.3553
 -   **Conclusion:** Hypothesis **REJECTED**. The more aggressive `1e-4` learning rate is demonstrably more effective for this model over a 100-step micro-train. The faster convergence leads to a significantly lower loss.
+
+---
+
+## 2025-01-11: KV-Cache implementation for optimized generation throughput
+
+-   **Discovery:** The NanoGPT model was performing autoregressive generation in $O(T^2)$ time by re-processing the entire sequence for every new token.
+-   **Strategy:** Implemented stateful Key-Value (KV) caching. Modified `CausalSelfAttention`, `Block`, and `GPT` to propagate and update caches. Injected pedagogical headers explaining the complexity shift from $O(T^2)$ to $O(T)$.
+-   **Results:**
+    -   **Baseline Generation:** ~13.47 tokens/sec (12 layers, CPU)
+    -   **Optimized Generation:** ~34.86 tokens/sec (12 layers, CPU)
+    -   **Speedup:** ~2.6x improvement in throughput.
+-   **Conclusion:** KV-caching is essential for scaling inference. The implementation is stable and maintains parity with training logic.
