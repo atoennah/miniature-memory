@@ -218,6 +218,7 @@ class CausalSelfAttention(nn.Module):
         self.dropout = config.dropout
 
     def forward(self, x: torch.Tensor, kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """Forward pass for the causal self-attention module, supporting stateful KV-caching."""
         """Forward pass for the causal self-attention module with optional KV caching."""
     # [INJECTOR: THE THEORY OF KV-CACHING]
     #
@@ -358,6 +359,7 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
+        # Bolt Optimization: KV-Cache Logic
         # [BOLT: KV-CACHE INJECTION]
         # If a cache is provided, concatenate current keys/values with the past.
         if kv_cache is not None:
@@ -367,6 +369,14 @@ class CausalSelfAttention(nn.Module):
 
         new_kv_cache = (k, v)
 
+        # ⚡ Bolt: Causal Logic for KV-Cache
+        # If we have a KV cache and T=1, it means we are generating one token at a time.
+        # We don't need a causal mask because we've already satisfied causality by only
+        # processing the new token.
+        is_causal = (kv_cache is None) and (T > 1)
+
+        # Causal self-attention using PyTorch's fused kernel
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=is_causal)
         # [BOLT: CAUSAL LOGIC OPTIMIZATION]
         # is_causal=True is only valid if we are processing the full sequence from scratch.
         # If we use a KV cache, we are predicting one token at a time (T=1), and it
@@ -487,6 +497,7 @@ class CausalSelfAttention(nn.Module):
         # Re-assemble all head outputs side by side
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         y = self.resid_dropout(self.c_proj(y))
+        return y, new_kv_cache
         return y, (k, v)
         return y, present
         return y, new_kv_cache
@@ -531,6 +542,12 @@ class Block(nn.Module):
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = FeedForward(config)
 
+    def forward(self, x: torch.Tensor, kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """Forward pass for a Transformer block with KV-cache support."""
+        attn_out, new_kv_cache = self.attn(self.ln_1(x), kv_cache)
+        x = x + attn_out
+        x = x + self.mlp(self.ln_2(x))
+        return x, new_kv_cache
     def forward(self, x: torch.Tensor, past_key_value: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """Forward pass for a Transformer block."""
         attn_out, next_kv = self.attn(self.ln_1(x), past_key_value)
@@ -686,6 +703,19 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
+    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None, kv_cache: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor], List[Tuple[torch.Tensor, torch.Tensor]]]:
+        """Forward pass for the GPT model, supporting stateful KV-caching."""
+        b, t = idx.size()
+
+        # ⚡ Bolt: Correct positional indexing when using KV-Cache
+        if kv_cache is not None:
+            # t should be 1 during KV-cache generation, but we need the absolute position
+            past_length = kv_cache[0][0].size(2)
+            assert past_length + t <= self.config.block_size, f"Total sequence length {past_length + t} exceeds block size {self.config.block_size}"
+            pos = torch.arange(past_length, past_length + t, dtype=torch.long, device=idx.device).unsqueeze(0)
+        else:
+            assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
+            pos = self.pos[:, :t]
     def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None, past_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor], List[Tuple[torch.Tensor, torch.Tensor]]]:
         """Forward pass for the GPT model."""
         b, t = idx.size()
@@ -801,6 +831,12 @@ class GPT(nn.Module):
         tok_emb = self.transformer.wte(idx)
         x = self.transformer.drop(tok_emb + pos_emb)
 
+        new_kv_caches = []
+        # Transformer blocks
+        for i, block in enumerate(self.transformer.h):
+            layer_kv_cache = kv_cache[i] if kv_cache is not None else None
+            x, new_layer_kv_cache = block(x, layer_kv_cache)
+            new_kv_caches.append(new_layer_kv_cache)
         # Transformer blocks with state propagation
         next_key_values = []
         for i, block in enumerate(self.transformer.h):
@@ -868,6 +904,16 @@ class GPT(nn.Module):
     @torch.no_grad()
     def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0, top_p: float = 0.9) -> torch.Tensor:
         """
+        Autoregressively generates a sequence of tokens using KV-cache for O(N) complexity.
+        """
+        self.eval()
+        kv_cache = None
+
+        # Initial forward pass to populate cache
+        logits, _, kv_cache = self(idx)
+
+        for _ in range(max_new_tokens):
+            # We only need the last token's logits
         Autoregressively generates a sequence of tokens using KV-caching and top-p (nucleus) sampling.
         """
         self.eval()
@@ -1055,6 +1101,15 @@ class GPT(nn.Module):
 
             # Forward pass for just the single NEW token using the cache
             logits, _, kv_caches = self(idx_next, kv_caches=kv_caches)
+
+            # Bolt: Check if we've reached the context limit
+            if idx.size(1) >= self.config.block_size:
+                # Reset cache and truncate idx to block_size if we exceed it
+                idx_cond = idx[:, -self.config.block_size:]
+                logits, _, kv_cache = self(idx_cond)
+            else:
+                # Optimized step: only forward the new token with the existing cache
+                logits, _, kv_cache = self(idx_next, kv_cache=kv_cache)
 
         self.train()
         return idx

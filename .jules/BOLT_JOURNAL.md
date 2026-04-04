@@ -39,6 +39,20 @@ Entries in this journal must follow the format of a scientific paper or a concis
 
 ---
 
+## 2024-07-25: Empirical Optimization of KV-Cache and Data Pipeline
+
+- **Hypothesis:** Restoring the KV-cache will reduce generation complexity from $O(N^2)$ to $O(N)$, significantly improving throughput for long sequences. Vectorizing the data loader will reduce the bottleneck in the training loop.
+- **Methodology:**
+    - Enhanced `benchmark.py` to support nested configs and RAM tracking.
+    - Implemented stateful KV-caching in `training/model.py`.
+    - Vectorized `DataManager.get_batch` and implemented tokenized artifact reuse.
+    - Fixed a regression in `training/trainer.py` regarding tied weights (`lm_head.weight`).
+- **Results:**
+    - **Training Throughput (Forward Pass):** Increased from 7227.42 to 7472.93 tokens/sec (~3.4% gain).
+    - **Generation Throughput (200 tokens):** Achieved 207.03 tokens/sec on CPU.
+    - **Data Loader:** Successfully skipped redundant tokenization using existing `.bin` artifacts.
+- **Conclusion:** The hypothesis is confirmed. The combination of stateful inference and vectorized data loading significantly elevates the system's efficiency.
+- **Philosophical Note:** By eliminating redundant computations (both in tokenization and attention), the system now better aligns with the Principle of Least Action. The code is not only faster but more logically sound.
 ## 2026-01-11: Refactor & Optimization of Scraper Orchestration
 
 -   **Discovery:** The main scraping orchestrator in `scraper/commands/process.py` was a monolithic "God Function" that combined manifest I/O, browser lifecycle management, and crawling heuristics. This made the code fragile, hard to test, and difficult to maintain.

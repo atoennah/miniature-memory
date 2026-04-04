@@ -68,6 +68,9 @@ class DataManager:
         total_size = 0
         chunk_size = 10 * 1024 * 1024
 
+        if not os.path.exists(data_path):
+            raise FileNotFoundError(f"Data file not found at {data_path}")
+
         with open(data_path, 'r', encoding='utf-8') as f:
             while True:
                 chunk = f.read(chunk_size)
@@ -88,6 +91,34 @@ class DataManager:
             pickle.dump({'vocab_size': self.vocab_size, 'stoi': stoi, 'itos': itos}, f)
 
         # --- Step 2: Create memory-mapped file and tokenize in chunks ---
+        tokenized_data_path = data_path + ".bin"
+        dtype = np.uint16  # Assuming vocab_size < 65535
+
+        # Bolt Optimization: Skip re-tokenization if the bin file is already present and matches expected size
+        expected_size = total_size * np.dtype(dtype).itemsize
+        if os.path.exists(tokenized_data_path) and os.path.getsize(tokenized_data_path) == expected_size:
+            print(f"⚡ Bolt: Utilizing existing tokenized artifact: {tokenized_data_path}")
+        else:
+            print(f"⚡ Bolt: Tokenizing dataset into {tokenized_data_path}...")
+            # Create the memory-mapped file with the correct total size
+            mm = np.memmap(tokenized_data_path, dtype=dtype, mode='w+', shape=(total_size,))
+
+            # Process the file again, this time tokenizing and writing to the memmap
+            processed_size = 0
+            with open(data_path, 'r', encoding='utf-8') as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    encoded_chunk = self.encode(chunk)
+                    mm[processed_size:processed_size + len(encoded_chunk)] = encoded_chunk
+                    processed_size += len(encoded_chunk)
+
+            # Flush changes to disk
+            mm.flush()
+
+        # Set the data attribute for reading
+        self.data = np.memmap(tokenized_data_path, dtype=dtype, mode='r', shape=(total_size,))
         dtype = np.uint16
         mm = np.memmap(bin_path, dtype=dtype, mode='w+', shape=(total_size,))
 
@@ -202,6 +233,11 @@ class DataManager:
 
         # Vectorized extraction via NumPy stack
         # This avoids multiple calls to torch.from_numpy within a loop
+        x_np = np.stack([self.data[i:i+self.block_size] for i in ix])
+        y_np = np.stack([self.data[i+1:i+self.block_size+1] for i in ix])
+
+        # Bolt Optimization: Vectorized extraction from memmap via NumPy stacking
+        # This is more efficient than looping over torch.from_numpy calls
         x_np = np.stack([self.data[i:i+self.block_size] for i in ix])
         y_np = np.stack([self.data[i+1:i+self.block_size+1] for i in ix])
 

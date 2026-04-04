@@ -33,3 +33,9 @@ inference:
   top_p: 0.9
 wandb:
   log: False
+  project: 'shakespeare'
+  run_name: 'mini-gpt'
+
+inference:
+  temperature: 0.8
+  top_p: 0.9

@@ -267,6 +267,11 @@ class Trainer:
         inter_params = decay & no_decay
         union_params = decay | no_decay
         assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
+        # Bolt Fix: Filter for tied weights compatibility
+        decay = {pn for pn in decay if pn in param_dict}
+        no_decay = {pn for pn in no_decay if pn in param_dict}
+
+        assert len(param_dict.keys() - union_params) == 0, "Parameters not in decay/no_decay sets"
 
         # Filter sets to only include parameters that were actually found in named_parameters
         # (Handling tied weights like lm_head.weight which may not appear separately)
