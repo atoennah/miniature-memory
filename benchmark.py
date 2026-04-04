@@ -20,6 +20,11 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
 
     config = GPTConfig(
         vocab_size=vocab_size,
+        block_size=config_data['model']['block_size'],
+        n_layer=config_data['model']['n_layer'],
+        n_head=config_data['model']['n_head'],
+        n_embd=config_data['model']['n_embd'],
+        dropout=config_data['model']['dropout']
         block_size=model_config['block_size'],
         n_layer=model_config['n_layer'],
         n_head=model_config['n_head'],
@@ -31,6 +36,8 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     model.eval() # Set to eval mode to disable dropout for benchmark
 
     # Generate dummy data
+    batch_size = config_data['training']['batch_size']
+    block_size = config_data['model']['block_size']
     batch_size = training_config['batch_size']
     batch_size = config_data['training']['batch_size']
     block_size = model_config['block_size']
