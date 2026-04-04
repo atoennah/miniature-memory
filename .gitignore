@@ -143,6 +143,10 @@ cython_debug/
 /out-shakespeare/
 # Training artifacts and model checkpoints
 /training/checkpoints/
+
+# Scraper debug artifacts
+debug_view.png
+debug_dom.html
 out-*/
 /out/
 /out-*/
