@@ -1,5 +1,4 @@
 import os
-import re
 import argparse
 
 # Define cleaning constants
@@ -55,12 +54,19 @@ def clean_content(content):
     cleaned = cleaned.strip()
 
     return cleaned
+from processing.normalize import TextNormalizer
+from processing.quality_filter import QualityFilter
 
 def run_cleaning(raw_dir, cleaned_dir):
     """
-    Walks the raw data directory, cleans files, and saves them to the cleaned directory.
+    Walks the raw data directory, cleans files using modular components,
+    and saves them to the cleaned directory.
     """
     print(f"Starting cleaning process from '{raw_dir}' to '{cleaned_dir}'...\n")
+
+    normalizer = TextNormalizer()
+    q_filter = QualityFilter()
+
     cleaned_count = 0
     skipped_count = 0
 
@@ -76,13 +82,18 @@ def run_cleaning(raw_dir, cleaned_dir):
 
                 try:
                     with open(raw_filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                        raw_content = f.read()
+                        content = f.read()
 
-                    cleaned_content = clean_content(raw_content)
+                    # 1. Filter out paragraphs with noise
+                    content = q_filter.filter_paragraphs(content)
 
-                    if cleaned_content:
+                    # 2. Normalize text
+                    content = normalizer.normalize(content)
+
+                    # 3. Final validation (Indonesian language check)
+                    if content and q_filter.validate(content):
                         with open(cleaned_filepath, 'w', encoding='utf-8') as f:
-                            f.write(cleaned_content)
+                            f.write(content)
                         print(f"[✅ CLEANED] {relative_path}")
                         cleaned_count += 1
                     else:
@@ -90,6 +101,7 @@ def run_cleaning(raw_dir, cleaned_dir):
                         # Remove existing cleaned file if it exists to avoid stale data
                         if os.path.exists(cleaned_filepath):
                             os.remove(cleaned_filepath)
+                        print(f"[⚠️ SKIPPED] {relative_path} (failed quality/language filter)")
                         skipped_count += 1
 
                 except Exception as e:
@@ -102,7 +114,7 @@ def run_cleaning(raw_dir, cleaned_dir):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Clean raw text files and save them to a new directory."
+        description="Clean raw text files using modular processing components."
     )
     parser.add_argument(
         "--raw_dir",
