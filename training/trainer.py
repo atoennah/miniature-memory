@@ -268,6 +268,11 @@ class Trainer:
         union_params = decay | no_decay
         assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
 
+        # Filter sets to only include parameters that were actually found in named_parameters
+        # (Handling tied weights like lm_head.weight which may not appear separately)
+        decay = {pn for pn in decay if pn in param_dict}
+        no_decay = {pn for pn in no_decay if pn in param_dict}
+
         # Filter decay/no_decay to only include parameters actually in param_dict
         # (Handling tied weights where the same parameter may have multiple names in named_modules but only one in named_parameters)
         decay = {pn for pn in decay if pn in param_dict}

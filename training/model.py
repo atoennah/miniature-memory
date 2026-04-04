@@ -259,6 +259,7 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
 
+        # Reshape to (B, nh, T, hs)
         if past_kv is not None:
             # [INJECTOR: THE MECHANICS OF THE KV CACHE]
             #
@@ -339,6 +340,12 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
 
+        if past_key_value is not None:
+            pk, pv = past_key_value
+            k = torch.cat((pk, k), dim=2)
+            v = torch.cat((pv, v), dim=2)
+
+        present = (k, v)
         if kv_cache is not None:
             past_k, past_v = kv_cache
             k = torch.cat((past_k, k), dim=-2)
@@ -376,6 +383,9 @@ class CausalSelfAttention(nn.Module):
         present_key_value = (k, v)
 
         # Causal self-attention using PyTorch's fused kernel
+        # When generating (T=1), causal masking is redundant and can be disabled to avoid
+        # incorrect masking of past tokens when using a KV cache.
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=(T > 1))
         # [INJECTOR: STATEFUL ATTENTION LOGIC]
         # When generating (T=1) and using a cache, the new token should be able to
         # attend to all previous tokens. Since we've already concatenated the past K,V,
@@ -472,6 +482,7 @@ class CausalSelfAttention(nn.Module):
         # Re-assemble all head outputs side by side
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         y = self.resid_dropout(self.c_proj(y))
+        return y, present
         return y, new_kv_cache
         return y, present_key_value
         return y, present_kv_cache
@@ -514,6 +525,12 @@ class Block(nn.Module):
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = FeedForward(config)
 
+    def forward(self, x: torch.Tensor, past_key_value: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """Forward pass for a Transformer block."""
+        attn_out, present = self.attn(self.ln_1(x), past_key_value=past_key_value)
+        x = x + attn_out
+        x = x + self.mlp(self.ln_2(x))
+        return x, present
     def forward(self, x: torch.Tensor, kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """Forward pass for a Transformer block."""
         attn_out, new_kv_cache = self.attn(self.ln_1(x), kv_cache=kv_cache)
@@ -658,6 +675,20 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
+    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None, past_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor], List[Tuple[torch.Tensor, torch.Tensor]]]:
+        """Forward pass for the GPT model."""
+        b, t = idx.size()
+
+        if past_key_values is not None:
+            # When using KV cache, 'idx' usually contains only the new tokens.
+            # The actual sequence length for positional embedding is T_past + T_new.
+            past_length = past_key_values[0][0].size(2)
+            total_length = past_length + t
+            assert total_length <= self.config.block_size
+            pos = torch.arange(past_length, total_length, dtype=torch.long, device=idx.device).unsqueeze(0)
+        else:
+            assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
+            pos = self.pos[:, :t]
     def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None, kv_caches: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor], List[Tuple[torch.Tensor, torch.Tensor]]]:
         """Forward pass for the GPT model."""
         b, t = idx.size()
@@ -767,6 +798,11 @@ class GPT(nn.Module):
             past_kv_cache = [None] * len(self.transformer.h)
 
         # Transformer blocks
+        new_past_key_values = []
+        for i, block in enumerate(self.transformer.h):
+            pkv = past_key_values[i] if past_key_values is not None else None
+            x, present = block(x, past_key_value=pkv)
+            new_past_key_values.append(present)
         next_past_key_values = []
         for i, block in enumerate(self.transformer.h):
             past_kv = past_key_values[i] if past_key_values is not None else None
@@ -797,6 +833,7 @@ class GPT(nn.Module):
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
+        return logits, loss, new_past_key_values
         return logits, loss, next_past_key_values
         return logits, loss, new_kv_cache
         return logits, loss, present_kv_cache
@@ -822,6 +859,25 @@ class GPT(nn.Module):
             # Top-p (nucleus) sampling
             probs = F.softmax(last_logits, dim=-1)
         Autoregressively generates a sequence of tokens using top-p (nucleus) sampling.
+        Optimized with KV-cache for O(N) generation complexity.
+        """
+        self.eval()
+        past_key_values = None
+
+        # If input is longer than block_size, crop it
+        if idx.size(1) > self.config.block_size:
+            idx = idx[:, -self.config.block_size:]
+
+        for i in range(max_new_tokens):
+            # If we already have a cache, only pass the last token
+            idx_cond = idx if past_key_values is None else idx[:, -1:]
+
+            # Reset cache if sequence length exceeds block_size
+            if past_key_values is not None and past_key_values[0][0].size(2) >= self.config.block_size:
+                past_key_values = None
+                idx_cond = idx[:, -self.config.block_size:]
+
+            logits, _, past_key_values = self(idx_cond, past_key_values=past_key_values)
         Utilizes KV-caching for $O(T)$ efficiency.
         """
         self.eval()
