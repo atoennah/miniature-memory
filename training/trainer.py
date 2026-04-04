@@ -43,6 +43,7 @@ class TrainerConfig:
     eval_interval: int = 100
     log_interval: int = 10
     output_dir: str = 'out'
+    punishment_scale: float = 0.0
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class Trainer:
@@ -109,7 +110,14 @@ class Trainer:
                                 dtype=torch.float16,
                                 enabled=(self.device == 'cuda')):
             # Forward pass now returns (logits, loss, kv_cache)
-            _, loss, _ = self.model(xb, yb)
+            logits, loss, _ = self.model(xb, yb)
+
+            # [BOLT: THE ENTROPY PUNISHMENT]
+            # Punishment for high uncertainty (entropy). Higher scale = stronger reward for confidence.
+            if self.config.punishment_scale > 0:
+                probs = torch.softmax(logits, dim=-1)
+                entropy = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1).mean()
+                loss = loss + self.config.punishment_scale * entropy
 
         # Backward pass
         self.optimizer.zero_grad(set_to_none=True)

@@ -51,6 +51,7 @@ def run_training(config: Dict[str, Any]) -> None:
         eval_interval=train_cfg_dict.get('eval_interval', 100),
         log_interval=train_cfg_dict.get('log_interval', 10),
         output_dir=train_cfg_dict.get('output_dir', 'out'),
+        punishment_scale=float(train_cfg_dict.get('punishment_scale', 0.0)),
         device='cuda' if torch.cuda.is_available() else 'cpu'
     )
 
