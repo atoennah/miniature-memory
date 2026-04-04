@@ -32,6 +32,7 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
 
     # Generate dummy data
     batch_size = training_config['batch_size']
+    batch_size = config_data['training']['batch_size']
     block_size = model_config['block_size']
     dummy_input = torch.randint(0, vocab_size, (batch_size, block_size))
     dummy_target = torch.randint(0, vocab_size, (batch_size, block_size))

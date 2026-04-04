@@ -163,6 +163,15 @@ class CausalSelfAttention(nn.Module):
         # When generating token by token with a KV cache, causality is implicit.
         use_causal_mask = kv_cache is None
         y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=use_causal_mask)
+        if kv_cache is not None:
+            past_k, past_v = kv_cache
+            k = torch.cat((past_k, k), dim=-2)
+            v = torch.cat((past_v, v), dim=-2)
+
+        present_kv = (k, v)
+
+        # Causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=kv_cache is None)
 
         # Re-assemble all head outputs side by side
         y = y.transpose(1, 2).contiguous().view(B, T, C)
@@ -170,6 +179,7 @@ class CausalSelfAttention(nn.Module):
         # Output projection
         y = self.resid_dropout(self.c_proj(y))
         return y, (k, v)
+        return y, present_kv
 
 class Block(nn.Module):
     # [INJECTOR: THE ARCHITECTURE OF A TRANSFORMER BLOCK]
@@ -313,7 +323,15 @@ class GPT(nn.Module):
         """Forward pass for the GPT model."""
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        pos = self.pos[:, :t]
+
+        # Determine the position embeddings based on whether we are using KV cache
+        if kv_caches is None:
+            pos = self.pos[:, :t]
+        else:
+            # If we have a KV cache, we are generating one token at a time.
+            # The position of the new token is the length of the cached sequence.
+            past_length = kv_caches[0][0].size(-2)
+            pos = self.pos[:, past_length:past_length + t]
 
         # Token and position embeddings
         tok_emb = self.transformer.wte(idx)
@@ -325,6 +343,7 @@ class GPT(nn.Module):
         for i, block in enumerate(self.transformer.h):
             kv_cache = kv_caches[i] if kv_caches else None
             x, new_kv_cache = block(x, kv_cache=kv_cache)
+            x, new_kv_cache = block(x, kv_caches[i] if kv_caches else None)
             new_kv_caches.append(new_kv_cache)
 
         # Final layer norm and language model head
@@ -354,6 +373,22 @@ class GPT(nn.Module):
 
         for _ in range(max_new_tokens):
             logits, _, kv_caches = self(idx_next, kv_caches=kv_caches)
+        Autoregressively generates a sequence of tokens using top-p (nucleus) sampling with KV caching.
+        """
+        self.eval()
+        kv_caches = None
+        for _ in range(max_new_tokens):
+            # If the sequence context is growing too long, crop it to block_size.
+            # Note: This is a simple way to handle long sequences but not the most efficient.
+            if kv_caches is not None:
+                # We have a cache, so we only need to process the last token.
+                idx_cond = idx[:, -1:]
+            else:
+                # No cache yet, process the full sequence.
+                idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+
+            # Forward the model to get the logits for the next token
+            logits, _, kv_caches = self(idx_cond, kv_caches=kv_caches)
             logits = logits[:, -1, :] / temperature
 
             # Top-p (nucleus) sampling
@@ -361,16 +396,12 @@ class GPT(nn.Module):
             sorted_probs, sorted_indices = torch.sort(probs, descending=True)
             cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
 
-            # Remove tokens with cumulative probability above the threshold
             sorted_indices_to_remove = cumulative_probs > top_p
-            # Shift the indices to the right to keep the first token above the threshold
             sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
             sorted_indices_to_remove[..., 0] = 0
 
             indices_to_remove = sorted_indices[sorted_indices_to_remove]
             probs[:, indices_to_remove] = 0
-
-            # Renormalize the probabilities
             probs = probs / torch.sum(probs, dim=-1, keepdim=True)
 
             idx_next = torch.multinomial(probs, num_samples=1)

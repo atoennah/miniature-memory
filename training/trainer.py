@@ -113,6 +113,12 @@ class Trainer:
                 elif pn.endswith('weight') and isinstance(m, blacklist_weight_modules):
                     no_decay.add(fpn)
 
+        # BUG: The lm_head weight is tied to the token embedding weight and should not be decayed.
+        # It's present in the decay set but not as a distinct parameter, causing a KeyError.
+        # We explicitly remove it here.
+        if 'lm_head.weight' in decay:
+            decay.remove('lm_head.weight')
+
         # Sanity checks to ensure every parameter is in one of the sets
         param_dict = {pn: p for pn, p in self.model.named_parameters()}
 
