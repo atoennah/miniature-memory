@@ -7,15 +7,14 @@ configuration file. It can be called from another script (like `run.py`)
 or executed standalone.
 """
 import argparse
-import os
-import yaml
 import torch
 from typing import Dict, Any
 
 from .data_loader import DataManager
 from .trainer import Trainer
+from .model import GPTConfig
 
-def run_training(config: Dict[str, Any]) -> None:
+def run_training(config_path: str) -> None:
     """
     Orchestrates the model training process.
 
@@ -23,18 +22,27 @@ def run_training(config: Dict[str, Any]) -> None:
     starts the training loop.
 
     Args:
-        config: A dictionary containing the training configuration.
+        config_path: Path to the YAML configuration file.
     """
+    # Load the configuration using the robust `from_yaml` method
+    config = GPTConfig.from_yaml(config_path)
+
+    # Pass the full config dictionary to legacy components for now.
+    # TODO: Refactor DataManager and Trainer to accept the GPTConfig object directly.
+    import yaml
+    with open(config_path, 'r') as f:
+        legacy_config = yaml.safe_load(f)
+
     # Initialize the data manager
     data_manager = DataManager(
-        data_path=config['data']['path'],
-        block_size=config['model']['block_size'],
-        batch_size=config['training']['batch_size'],
+        data_path=legacy_config['data']['path'],
+        block_size=config.block_size,
+        batch_size=legacy_config['training']['batch_size'],
         device='cuda' if torch.cuda.is_available() else 'cpu'
     )
 
     # Initialize and run the trainer
-    trainer = Trainer(config=config, data_manager=data_manager)
+    trainer = Trainer(config=legacy_config, data_manager=data_manager)
     trainer.run()
 
 
@@ -54,18 +62,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    try:
-        with open(args.config, 'r') as f:
-            config = yaml.safe_load(f)
-    except FileNotFoundError:
-        print(f"Error: Configuration file not found at '{args.config}'")
-        return
-
-    # Provide sensible defaults for standalone execution.
-    config.setdefault('training', {}).setdefault('output_dir', 'training/checkpoints')
-    config.setdefault('data', {}).setdefault('path', 'dataset/processed/train.txt')
-
-    run_training(config)
+    run_training(args.config)
 
 
 if __name__ == '__main__':

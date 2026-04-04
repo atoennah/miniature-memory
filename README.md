@@ -12,10 +12,13 @@ A minimal, memory-aware, and fully automated pipeline for training small, specia
 
 This repository is managed with a strong focus on clear, centralized documentation. To understand the project, please use the following resources as your guide.
 
+-   **To understand the system's design and *why* it's built this way:**
+    -   **[ARCHITECTURE.md](ARCHITECTURE.md):** A high-level overview of the system's components and data flow. **Recommended first read.**
+
 -   **To understand *how* to contribute and use the pipeline:**
     -   **[DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md):** The essential guide for all contributors. Contains setup instructions, a full data pipeline walkthrough, and training commands. **Start here.**
 
--   **To understand the project's governance and *why* decisions are made:**
+-   **To understand the project's governance and development process:**
     -   **[.jules/AGENTS.md](.jules/AGENTS.md):** Defines the roles and governance model for all agents and contributors.
     -   **[.jules/ROADMAP.md](.jules/ROADMAP.md):** The long-term vision and development phases.
     -   **[.jules/BOLT_JOURNAL.md](.jules/BOLT_JOURNAL.md):** A scientific log of all major architectural decisions and performance benchmarks.
