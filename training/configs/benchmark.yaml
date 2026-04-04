@@ -1,6 +1,7 @@
 # Configuration for benchmarking scripts (benchmark.py and benchmark_inference.py)
 # This file provides a consistent model and batch size for performance measurements.
 
+# Benchmark configuration with nested structure
 model:
   n_layer: 6
   n_head: 6
