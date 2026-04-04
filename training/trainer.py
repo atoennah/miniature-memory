@@ -250,6 +250,7 @@ class Trainer:
         xb, yb = self.data_manager.get_batch()
 
         with torch.amp.autocast(device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')):
+            # The forward pass now returns a third value, the kv_cache, which is not needed for training.
             # The forward pass now returns a third value, the kv_cache, which we ignore during training
         with torch.amp.autocast(
             device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')

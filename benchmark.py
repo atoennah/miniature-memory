@@ -16,6 +16,8 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     vocab_size = 512
 
     model_config = config_data['model']
+    config = GPTConfig(
+        vocab_size=vocab_size,
     training_config = config_data['training']
 
     config = GPTConfig(
@@ -51,6 +53,7 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
 
     # Warmup phase
     for _ in range(warmup_steps):
+        # The forward pass now returns a third value, the kv_cache, which is not needed for this benchmark.
         _, _, _ = model(dummy_input, dummy_target)
 
     # Benchmark phase

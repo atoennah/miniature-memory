@@ -145,6 +145,9 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
         config_data = yaml.safe_load(f)
 
     # Use a dummy vocab_size for benchmark purposes
+    vocab_size = 512
+
+    model_config = config_data['model']
     # In a real scenario, this would come from the tokenizer
     vocab_size = 512
 
@@ -165,6 +168,19 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     )
 
     model = GPT(config)
+    model.eval()
+
+    # Generate dummy data
+    batch_size = 1 # Inference is typically done with a single batch
+    prompt = torch.randint(0, vocab_size, (batch_size, 10)) # A short prompt
+    max_new_tokens = 100
+
+    # Warmup phase
+    _ = model.generate(prompt, max_new_tokens=5)
+
+    # Benchmark phase
+    start_time = time.time()
+    _ = model.generate(prompt, max_new_tokens=max_new_tokens)
     model.eval() # Set to eval mode
 
     # --- Benchmark Settings ---
@@ -288,12 +304,15 @@ if __name__ == "__main__":
 
     # Calculate throughput
     total_time = end_time - start_time
+    total_tokens = batch_size * max_new_tokens
     total_tokens = batch_size * tokens_to_generate
     tokens_per_second = total_tokens / total_time
 
     print(f"--- Inference Benchmark Results ---")
     print(f"Configuration: {config_path}")
     print(f"Batch Size: {batch_size}")
+    print(f"New Tokens Generated: {max_new_tokens}")
+    print(f"Total Tokens: {total_tokens}")
     print(f"Tokens Generated per sample: {tokens_to_generate}")
     print(f"Total Tokens Generated: {total_tokens}")
     print(f"Total Time: {total_time:.2f} seconds")
