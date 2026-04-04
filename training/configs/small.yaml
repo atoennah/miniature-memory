@@ -1,26 +1,70 @@
-# A small config for testing, restructured for clarity and compatibility.
+# Small configuration for testing
+# Bolt's Optimized Config for Micro-Training
 data:
   path: 'dataset/processed/train.txt' # Default path, can be overridden.
+  path: 'dataset/processed/train.txt'
 model:
+  block_size: 256
   n_layer: 6
   n_head: 6
   n_embd: 384
+  dropout: 0.2
+
+training:
+  batch_size: 64
+  learning_rate: 1e-3
+  min_lr: 1e-4
+  warmup_iters: 100
+  lr_decay_iters: 5000
+  max_steps: 5000
+  eval_interval: 250
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.99
+  output_dir: 'training/checkpoints'
+  decay_lr: True
+
+data:
+  path: 'dataset/processed/train.txt'
+  block_size: 256
+  dropout: 0.1
   block_size: 256  # context of up to 256 previous characters
   dropout: 0.2
+  vocab_size: 50257 # Standard GPT-2 vocab size, a safe default.
 training:
   output_dir: 'training/checkpoints'
   eval_interval: 100
+  output_dir: 'out/bolt_micro_train'
+  eval_interval: 50
+  log_interval: 10
+  eval_iters: 20
+  always_save_checkpoint: True
   learning_rate: 1.0e-3
   weight_decay: 1.0e-1
   beta1: 0.9
   beta2: 0.99
   grad_clip: 1.0
   decay_lr: True
-  warmup_iters: 100
-  lr_decay_iters: 500
+  warmup_iters: 20
+  lr_decay_iters: 100
   min_lr: 1.0e-4
   batch_size: 32
   max_steps: 500
 inference:
   temperature: 1.0
+  gradient_accumulation_steps: 1
+  max_steps: 100
+inference:
+  temperature: 0.8
+  top_p: 0.9
+wandb:
+  log: False
+  project: 'shakespeare'
+  run_name: 'mini-gpt'
+
+# Inference settings
+inference:
+  temperature: 1.0
+inference:
+  temperature: 0.8
   top_p: 0.9
