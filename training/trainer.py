@@ -190,6 +190,11 @@ class Trainer:
         inter_params = decay & no_decay
         union_params = decay | no_decay
         assert len(inter_params) == 0, "Parameters in both decay/no_decay sets"
+
+        # Filter decay/no_decay to only include parameters actually in param_dict
+        # (Handling tied weights where the same parameter may have multiple names in named_modules but only one in named_parameters)
+        decay = {pn for pn in decay if pn in param_dict}
+        no_decay = {pn for pn in no_decay if pn in param_dict}
         assert len(param_dict.keys() - union_params) == 0, f"Parameters not in decay/no_decay sets: {param_dict.keys() - union_params}"
 
         optim_groups = [
