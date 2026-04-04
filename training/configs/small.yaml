@@ -1,4 +1,7 @@
 # Small configuration for testing
+# Bolt's Optimized Config for Micro-Training
+data:
+  path: 'dataset/processed/train.txt'
 model:
   block_size: 256
   n_layer: 6
@@ -22,3 +25,37 @@ training:
 
 data:
   path: 'dataset/processed/train.txt'
+  block_size: 256
+  dropout: 0.1
+  block_size: 256  # context of up to 256 previous characters
+  dropout: 0.2
+  vocab_size: 50257 # Standard GPT-2 vocab size, a safe default.
+training:
+  output_dir: 'out/bolt_micro_train'
+  eval_interval: 50
+  log_interval: 10
+  eval_iters: 20
+  always_save_checkpoint: True
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-1
+  beta1: 0.9
+  beta2: 0.99
+  grad_clip: 1.0
+  decay_lr: True
+  warmup_iters: 20
+  lr_decay_iters: 100
+  min_lr: 1.0e-4
+  batch_size: 32
+  gradient_accumulation_steps: 1
+  max_steps: 100
+inference:
+  temperature: 0.8
+  top_p: 0.9
+wandb:
+  log: False
+  project: 'shakespeare'
+  run_name: 'mini-gpt'
+
+inference:
+  temperature: 0.8
+  top_p: 0.9

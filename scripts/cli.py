@@ -1,4 +1,10 @@
 import argparse
+import sys
+import os
+
+# Add the project root to the Python path to allow importing local modules
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from scraper.commands.search import run_search
 from scraper.commands.process import run_process
 
