@@ -7,6 +7,9 @@ model:
   n_embd: 384
   block_size: 256
   dropout: 0.1
+  block_size: 256  # context of up to 256 previous characters
+  dropout: 0.2
+  vocab_size: 50257 # Standard GPT-2 vocab size, a safe default.
 training:
   output_dir: 'out/bolt_micro_train'
   eval_interval: 50
