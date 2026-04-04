@@ -145,6 +145,10 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
         config_data = yaml.safe_load(f)
 
     # Use a dummy vocab_size for benchmark purposes
+    # In a real scenario, this would come from the tokenizer
+    vocab_size = 512
+
+    model_config = config_data['model']
     vocab_size = 512
     model_config = config_data['model']
 
@@ -162,6 +166,19 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
 
     model = GPT(config)
     model.eval() # Set to eval mode
+
+    # --- Benchmark Settings ---
+    num_runs = 5
+    max_new_tokens = 100
+    prompt = torch.zeros((1, 1), dtype=torch.long) # A single <start> token
+
+    throughputs = []
+    print("--- Starting Inference Benchmark ---")
+    print(f"Configuration: {config_path}")
+    print(f"Number of runs: {num_runs}")
+    print(f"Tokens to generate per run: {max_new_tokens}")
+    print("------------------------------------")
+
 
     # Generate dummy data for the prompt
     prompt = torch.randint(0, vocab_size, (1, 10)) # Batch size 1, 10 tokens prompt
@@ -183,6 +200,22 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
         start_time = time.time()
         _ = model.generate(prompt, max_new_tokens=max_new_tokens)
         end_time = time.time()
+
+        duration = end_time - start_time
+        throughput = max_new_tokens / duration
+        throughputs.append(throughput)
+        print(f"Run {i+1}/{num_runs}: {throughput:.2f} tokens/sec")
+
+    # --- Calculate and Report Average ---
+    avg_throughput = sum(throughputs) / len(throughputs)
+
+    print("\n--- Benchmark Results ---")
+    print(f"Average Throughput: {avg_throughput:.2f} tokens/sec")
+    print(f"-----------------------")
+    return avg_throughput
+
+if __name__ == "__main__":
+    run_inference_benchmark()
         run_time = end_time - start_time
         total_time += run_time
         print(f"  Run {i+1}/{num_runs}: {max_new_tokens / run_time:.2f} tokens/sec")

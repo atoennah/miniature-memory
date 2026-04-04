@@ -35,6 +35,7 @@ checkpointing, all driven by a configuration dictionary.
 import os
 import time
 import math
+import logging
 import torch
 import torch.nn as nn
 from typing import Dict, Any, List, Optional, Tuple
@@ -42,6 +43,8 @@ from typing import Dict, Any, List, Optional, Tuple
 from .data_loader import DataManager
 from .model import GPT, GPTConfig
 
+# --- Basic logging setup ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def create_optimizer_param_groups(
     model: nn.Module, weight_decay: float
@@ -108,7 +111,7 @@ class Trainer:
         self.config = config
         self.data_manager = data_manager
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        print(f"Using device: {self.device}")
+        logging.info(f"Using device: {self.device}")
 
         self.model: nn.Module = self._build_model()
         self.optimizer: torch.optim.Optimizer = self._build_optimizer()
@@ -134,6 +137,7 @@ class Trainer:
         Returns:
             The configured AdamW optimizer.
         """
+        param_dict = {pn: p for pn, p in self.model.named_parameters()}
         weight_decay = self.config['training']['weight_decay']
         optim_groups = create_optimizer_param_groups(self.model, weight_decay)
         decay = set()
@@ -146,6 +150,9 @@ class Trainer:
             for pn, p in m.named_parameters():
                 fpn = '%s.%s' % (mn, pn) if mn else pn
 
+                if fpn not in param_dict:
+                    continue
+
                 # Biases are never decayed
                 if pn.endswith('bias'):
                     no_decay.add(fpn)
@@ -156,6 +163,9 @@ class Trainer:
                 elif pn.endswith('weight') and isinstance(m, blacklist_weight_modules):
                     no_decay.add(fpn)
 
+        # Sanity check to ensure every parameter is in one of the sets
+        all_params = decay | no_decay
+        assert len(param_dict.keys() - all_params) == 0, "Not all parameters were assigned to an optimizer group"
         # BUG: The lm_head weight is tied to the token embedding weight and should not be decayed.
         # It's present in the decay set but not as a distinct parameter, causing a KeyError.
         # We explicitly remove it here.
@@ -240,6 +250,7 @@ class Trainer:
         xb, yb = self.data_manager.get_batch()
 
         with torch.amp.autocast(device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')):
+            # The forward pass now returns a third value, the kv_cache, which we ignore during training
         with torch.amp.autocast(
             device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')
         ):
@@ -270,7 +281,10 @@ class Trainer:
             lr: The learning rate for the current step.
         """
         max_steps = self.config['training']['max_steps']
+        log_msg = f"Step {step:4d}/{max_steps}: Loss: {loss.item():.4f}"
         if lr is not None:
+            log_msg += f", LR: {lr:.6f}"
+        logging.info(log_msg)
             print(
                 f"Step {step:4d}/{max_steps}: Loss: {loss.item():.4f}, "
                 f"LR: {lr:.6f}"
@@ -283,7 +297,7 @@ class Trainer:
         This method orchestrates the training process, including learning rate
         scheduling, executing training steps, and logging progress.
         """
-        print("\nStarting training...")
+        logging.info("Starting training...")
         start_time = time.time()
         max_steps = self.config['training']['max_steps']
         eval_interval = self.config['training']['eval_interval']
@@ -300,7 +314,7 @@ class Trainer:
 
         end_time = time.time()
         duration = end_time - start_time
-        print(f"Training finished in {duration:.2f} seconds.")
+        logging.info(f"Training finished in {duration:.2f} seconds.")
         self._save_checkpoint()
 
     def _save_checkpoint(self) -> None:
@@ -309,4 +323,4 @@ class Trainer:
         os.makedirs(output_dir, exist_ok=True)
         checkpoint_path = os.path.join(output_dir, 'model.pt')
         torch.save(self.model.state_dict(), checkpoint_path)
-        print(f"\nModel checkpoint saved to: {checkpoint_path}")
+        logging.info(f"Model checkpoint saved to: {checkpoint_path}")

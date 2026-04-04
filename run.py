@@ -98,12 +98,21 @@ def main():
 
     if not args.skip_training:
         print("--- Running Training ---")
-        # Note: training/train.py is not yet a standalone script, so we keep the import for now.
         try:
-            from training.train import main as run_training
-            run_training()
-        except ImportError:
-            _handle_import_error("training.train")
+            import yaml
+            from training.train import run_training
+
+            with open(args.config, 'r') as f:
+                config = yaml.safe_load(f)
+
+            # Set defaults if not present, crucial for runs that skip data prep
+            config.setdefault('data', {}).setdefault('path', 'dataset/processed/train.txt')
+
+            run_training(config)
+
+        except (ImportError, FileNotFoundError) as e:
+            print(f"Error during training setup: {e}", file=sys.stderr)
+            sys.exit(1)
         print("--- Training completed successfully ---\n")
 
     print("Pipeline finished.")

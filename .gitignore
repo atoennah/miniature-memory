@@ -136,6 +136,11 @@ cython_debug/
 /dataset/processed/
 /dataset/rejected/
 
+# Model checkpoints and outputs
+/training/checkpoints/
+/out/
+/out-*/
+/out-shakespeare/
 # Training artifacts and model checkpoints
 /training/checkpoints/
 out-*/
