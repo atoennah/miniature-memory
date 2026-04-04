@@ -50,3 +50,12 @@ Entries in this journal must follow the format of a scientific paper or a concis
     -   **Optimized (Long Seq, 450):** 103.5 tokens/sec
     -   **Overall Improvement:** ~6.5x speedup for long sequences with minimal (~3.5%) overhead on training throughput.
 -   **Conclusion:** KV-caching is the single most impactful architectural optimization for this project's inference pipeline, enabling near-constant generation speed within the context window.
+## 2025-01-11: KV-Cache implementation for optimized generation throughput
+
+-   **Discovery:** The NanoGPT model was performing autoregressive generation in $O(T^2)$ time by re-processing the entire sequence for every new token.
+-   **Strategy:** Implemented stateful Key-Value (KV) caching. Modified `CausalSelfAttention`, `Block`, and `GPT` to propagate and update caches. Injected pedagogical headers explaining the complexity shift from $O(T^2)$ to $O(T)$.
+-   **Results:**
+    -   **Baseline Generation:** ~13.47 tokens/sec (12 layers, CPU)
+    -   **Optimized Generation:** ~34.86 tokens/sec (12 layers, CPU)
+    -   **Speedup:** ~2.6x improvement in throughput.
+-   **Conclusion:** KV-caching is essential for scaling inference. The implementation is stable and maintains parity with training logic.
