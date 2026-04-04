@@ -239,6 +239,7 @@ class Trainer:
         grad_clip = self.config['training'].get('grad_clip', 1.0)
         xb, yb = self.data_manager.get_batch()
 
+        with torch.amp.autocast(device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')):
         with torch.amp.autocast(
             device_type=self.device, dtype=torch.float16, enabled=(self.device == 'cuda')
         ):

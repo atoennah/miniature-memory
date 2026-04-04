@@ -216,6 +216,7 @@ class CausalSelfAttention(nn.Module):
         self.n_embd = config.n_embd
         self.dropout = config.dropout
 
+    def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
     def forward(self, x: torch.Tensor, kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """Forward pass for the causal self-attention module."""
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
@@ -229,6 +230,33 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
+        # [INJECTOR: KV CACHE LOGIC]
+        #
+        # During inference, recomputing the key (k) and value (v) tensors for the
+        # entire sequence at every step is computationally wasteful. The KV cache
+        # optimization avoids this by storing the k and v tensors from previous steps
+        # and reusing them.
+        #
+        # How it works:
+        # 1.  On the first step (or during training), `past_kv` is None. We compute
+        #     k and v for the full sequence and return them as the `present_kv`.
+        # 2.  On subsequent inference steps, `x` contains only the newest token (T=1).
+        #     We compute its q, k, and v.
+        # 3.  We retrieve the cached k and v from `past_kv` and concatenate the new
+        #     k and v to them along the sequence length dimension. This extends the
+        #     cache for the next step.
+        # 4.  Attention is then calculated using the new single-token query (q) and the
+        #     full-length cached keys and values. This is much faster than recomputing
+        #     for the entire context each time.
+        if past_kv is not None:
+            past_key, past_value = past_kv
+            k = torch.cat((past_key, k), dim=2)
+            v = torch.cat((past_value, v), dim=2)
+        present_kv = (k, v)
+
+        # Causal self-attention using PyTorch's fused kernel
+        # When using a KV cache, T_q is 1, so the causal mask is implicitly handled, and is_causal must be False.
+        y = F.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=(past_kv is None))
         # [INJECTOR: KV CACHING FOR EFFICIENT INFERENCE]
         # During autoregressive generation, the self-attention mechanism would re-compute
         # the Key (K) and Value (V) matrices for all previous tokens at every single step.
@@ -297,6 +325,12 @@ class Block(nn.Module):
         self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = FeedForward(config)
 
+    def forward(self, x: torch.Tensor, past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """Forward pass for a Transformer block."""
+        attn_output, present_kv = self.attn(self.ln_1(x), past_kv=past_kv)
+        x = x + attn_output
+        x = x + self.mlp(self.ln_2(x))
+        return x, present_kv
     def forward(self, x: torch.Tensor, kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """Forward pass for a Transformer block."""
         attn_output, kv_cache = self.attn(self.ln_1(x), kv_cache=kv_cache)
@@ -399,10 +433,25 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
+    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None, past_kv_cache: Optional[list] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor], list]:
     def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None, kv_caches: Optional[list] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[list]]:
         """Forward pass for the GPT model."""
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
+
+        # [INJECTOR: KV CACHE INFERENCE PATH]
+        #
+        # During cached inference, the model receives only the most recent token (`t=1`),
+        # not the full sequence. The positional embedding (`pos_emb`) needs to know the
+        # true position of this token in the sequence. We determine this from the size
+        # of the `past_kv_cache`. If the cache is present and has items, the sequence
+        # length of the cached tensors tells us the starting position for the new token.
+        # If there's no cache, we start from position 0.
+        if past_kv_cache is not None:
+            seq_len_offset = past_kv_cache[0][0].shape[2]
+        else:
+            seq_len_offset = 0
+        pos = self.pos[:, seq_len_offset : seq_len_offset + t]
 
         # Determine the position embeddings based on whether we are using KV cache
         if kv_caches is None:
@@ -418,7 +467,12 @@ class GPT(nn.Module):
         pos_emb = self.transformer.wpe(pos)
         x = self.transformer.drop(tok_emb + pos_emb)
 
+        present_kv_cache = []
         # Transformer blocks
+        for i, block in enumerate(self.transformer.h):
+            past_kv = past_kv_cache[i] if past_kv_cache is not None else None
+            x, present_kv = block(x, past_kv)
+            present_kv_cache.append(present_kv)
         new_kv_caches = []
         for i, block in enumerate(self.transformer.h):
             kv_cache = kv_caches[i] if kv_caches else None
@@ -435,6 +489,7 @@ class GPT(nn.Module):
             # if we are given some desired targets also calculate the loss
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
 
+        return logits, loss, present_kv_cache
         return logits, loss, new_kv_caches
 
     @torch.no_grad()
@@ -456,6 +511,16 @@ class GPT(nn.Module):
         Autoregressively generates a sequence of tokens using top-p (nucleus) sampling with KV caching.
         """
         self.eval()
+        past_kv_cache = None
+        for _ in range(max_new_tokens):
+            if past_kv_cache is not None:
+                # When using KV cache, we only need to process the last token
+                idx_cond = idx[:, -1:]
+            else:
+                # On the first pass, process the full context
+                idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+
+            logits, _, past_kv_cache = self(idx_cond, past_kv_cache=past_kv_cache)
         kv_caches = None
         for _ in range(max_new_tokens):
             # If the sequence context is growing too long, crop it to block_size.
