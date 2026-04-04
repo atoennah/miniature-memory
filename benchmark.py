@@ -21,6 +21,18 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
 
     config = GPTConfig(
         vocab_size=vocab_size,
+    model_config = config_data['model']
+    config = GPTConfig(
+        vocab_size=vocab_size,
+    training_config = config_data['training']
+
+    config = GPTConfig(
+        vocab_size=vocab_size,
+        block_size=config_data['model']['block_size'],
+        n_layer=config_data['model']['n_layer'],
+        n_head=config_data['model']['n_head'],
+        n_embd=config_data['model']['n_embd'],
+        dropout=config_data['model']['dropout']
         block_size=model_config['block_size'],
         n_layer=model_config['n_layer'],
         n_head=model_config['n_head'],
@@ -33,6 +45,11 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
 
     # Generate dummy data
     batch_size = train_config['batch_size']
+    batch_size = training_config['batch_size']
+    batch_size = config_data['training']['batch_size']
+    block_size = config_data['model']['block_size']
+    batch_size = training_config['batch_size']
+    batch_size = config_data['training']['batch_size']
     block_size = model_config['block_size']
     dummy_input = torch.randint(0, vocab_size, (batch_size, block_size))
     dummy_target = torch.randint(0, vocab_size, (batch_size, block_size))
@@ -43,6 +60,7 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
 
     # Warmup phase
     for _ in range(warmup_steps):
+        # The forward pass now returns a third value, the kv_cache, which is not needed for this benchmark.
         _, _, _ = model(dummy_input, dummy_target)
 
     # Benchmark phase
