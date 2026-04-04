@@ -13,8 +13,14 @@ tokenizer:
 
 training:
   batch_size: 64 # Optimized: Power of 2 for GPU efficiency
-  learning_rate: 5e-5 # Optimized: Lowered for stability on small dataset
-  betas: [0.9, 0.95]
+  learning_rate: 5e-4 # Optimized: Bolt suggests 5e-4 for faster convergence on clean data
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  warmup_iters: 10
+  lr_decay_iters: 100
+  min_lr: 5e-5
+  decay_lr: True
   epochs: 1
   output_dir: 'training/checkpoints'
   max_steps: 100

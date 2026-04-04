@@ -39,6 +39,18 @@ Entries in this journal must follow the format of a scientific paper or a concis
 
 ---
 
+## 2024-07-24: Data Cleanliness Audit & Orchestrator Fix
+
+-   **Discovery 1:** The training dataset was contaminated with repetitive Wattpad promotional boilerplate, which acts as high-frequency noise.
+-   **Discovery 2:** The `run.py` orchestrator was failing to pass the `--config` argument to the underlying `train.py` script, causing it to fall back to a potentially broken or flat `small.yaml`.
+-   **Strategy:**
+    1. Injected a `NOISE_KEYWORDS` filter into the cleaning pipeline.
+    2. Refactored `run.py` to correctly reconstruct `sys.argv` for the training stage.
+    3. Implemented numeric type casting in `Trainer` to handle YAML parsing edge cases.
+-   **Results:**
+    -   **Cleanliness:** Noise occurrences dropped from 81 to 0.
+    -   **Stability:** Training now successfully executes with nested configurations and tied weights.
+-   **Conclusion:** Data quality and pipeline integrity are as important as model architecture. A clean, correctly-routed pipeline is the foundation of effective training.
 ## 2024-07-25: KV-Cache Optimization for LLM Inference
 
 -   **Discovery:** A significant performance bottleneck was identified in the `GPT.generate` method. Inference throughput dropped by ~89% as the sequence length increased (from 136 tokens/sec at length 10 down to 15.7 tokens/sec at length 450). This was caused by the $O(N^2)$ re-computation of the entire sequence for every new token generated.

@@ -15,6 +15,17 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     # Use a dummy vocab_size for benchmark purposes
     vocab_size = 512
 
+    # Support both flat and nested configuration formats
+    model_cfg = config_data.get('model', config_data)
+    train_cfg = config_data.get('training', config_data)
+
+    config = GPTConfig(
+        vocab_size=vocab_size,
+        block_size=model_cfg['block_size'],
+        n_layer=model_cfg['n_layer'],
+        n_head=model_cfg['n_head'],
+        n_embd=model_cfg['n_embd'],
+        dropout=model_cfg['dropout']
     # Support both nested and flat config structures
     model_config = config_data.get('model', config_data)
     train_config = config_data.get('training', config_data)
@@ -44,6 +55,8 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     model.eval() # Set to eval mode to disable dropout for benchmark
 
     # Generate dummy data
+    batch_size = train_cfg['batch_size']
+    block_size = model_cfg['block_size']
     batch_size = config_data['training']['batch_size']
     block_size = config_data['model']['block_size']
     batch_size = train_config['batch_size']

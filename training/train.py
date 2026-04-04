@@ -24,6 +24,16 @@ def run_training(config_path: str) -> None:
     Args:
         config_path: Path to the YAML configuration file.
     """
+    # Support both flat and nested configuration formats
+    data_cfg = config.get('data', config)
+    model_cfg = config.get('model', config)
+    train_cfg = config.get('training', config)
+
+    # Initialize the data manager
+    data_manager = DataManager(
+        data_path=data_cfg['path'],
+        block_size=model_cfg['block_size'],
+        batch_size=train_cfg['batch_size'],
     # Load the configuration using the robust `from_yaml` method
     config = GPTConfig.from_yaml(config_path)
 
@@ -62,6 +72,26 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    try:
+        with open(args.config, 'r') as f:
+            config = yaml.safe_load(f)
+    except FileNotFoundError:
+        print(f"Error: Configuration file not found at '{args.config}'")
+        return
+
+    # Provide sensible defaults for standalone execution.
+    # We only add nested keys if the config already uses them, otherwise we stay flat.
+    if 'training' in config:
+        config['training'].setdefault('output_dir', 'training/checkpoints')
+    else:
+        config.setdefault('output_dir', 'training/checkpoints')
+
+    if 'data' in config:
+        config['data'].setdefault('path', 'dataset/processed/train.txt')
+    else:
+        config.setdefault('path', 'dataset/processed/train.txt')
+
+    run_training(config)
     run_training(args.config)
 
 

@@ -76,8 +76,9 @@ def main():
 
     check_dependencies()
 
-    # Pass the unknown arguments to the training script
-    sys.argv = [sys.argv[0]] + unknown
+    # Pass the config and unknown arguments to the training script
+    # We reconstruct sys.argv so that the training script sees the intended config
+    sys.argv = [sys.argv[0], "--config", args.config] + unknown
 
     print("Starting the miniature-memory pipeline...\n")
 
