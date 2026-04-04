@@ -39,6 +39,19 @@ Entries in this journal must follow the format of a scientific paper or a concis
 
 ---
 
+## 2024-07-24: ⚡ Bolt: KV-Cache Optimization for Stateful Generation
+
+-   **🔬 Hypothesis:** Transitioning from a stateless, naive autoregressive generation ($O(T^2)$ complexity) to a stateful KV-cache implementation will yield significant throughput gains, especially as sequence length increases, by reducing redundant computation of Key and Value tensors.
+-   **🛠️ Methodology:**
+    -   Refactored `CausalSelfAttention`, `Block`, and `GPT` to support persistent KV-states.
+    -   Optimized the attention forward pass to perform incremental projections and concatenations.
+    -   Adjusted `F.scaled_dot_product_attention` logic to handle both full-sequence masking and single-token incremental attention via the `is_causal=(T > 1)` heuristic.
+    -   Updated the training loop and benchmark scripts to accommodate the new stateful return signature.
+-   **📊 Results (Measured on CPU):**
+    -   **Baseline (Naive):** 18.15 tps (Len 50), 9.54 tps (Len 200).
+    -   **Optimized (KV-Cache):** 66.78 tps (Len 50), 62.20 tps (Len 200).
+    -   **Speedup:** ~3.6x at short sequences, scaling to **~6.5x speedup** at the context limit.
+-   **🧠 Philosophical Note:** In the naive implementation, the model suffered from "Amnesia of Computation"—re-learning everything it had already processed at every step. By introducing the KV-cache, we align the architecture with the **Principle of Continuity**, allowing the model to carry its state forward in time. The code now reflects the true nature of an autoregressive process: a Markov chain where the "past" is preserved as a compressed state rather than being re-simulated from scratch.
 ## 2025-02-05: KV-Cache & Data Loading Optimization
 
 -   **Discovery:** Identified two major performance bottlenecks: 1) $O(N^2)$ inference complexity due to lack of a KV-cache, and 2) High training startup latency and low ingestion throughput in `DataManager` due to redundant tokenization and loop-based batching.

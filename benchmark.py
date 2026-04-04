@@ -15,6 +15,17 @@ def run_benchmark(config_path='training/configs/benchmark.yaml'):
     # Use a dummy vocab_size for benchmark purposes
     vocab_size = 512
 
+    # Support both flat and nested config for robustness
+    model_cfg = config_data.get('model', config_data)
+    train_cfg = config_data.get('training', config_data)
+
+    config = GPTConfig(
+        vocab_size=vocab_size,
+        block_size=model_cfg['block_size'],
+        n_layer=model_cfg['n_layer'],
+        n_head=model_cfg['n_head'],
+        n_embd=model_cfg['n_embd'],
+        dropout=model_cfg['dropout']
     # Support both flat and nested configuration formats
     model_cfg = config_data.get('model', config_data)
     train_cfg = config_data.get('training', config_data)
