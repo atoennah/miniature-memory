@@ -112,12 +112,16 @@ class Trainer:
             # Forward pass now returns (logits, loss, kv_cache)
             logits, loss, _ = self.model(xb, yb)
 
-            # [BOLT: THE ENTROPY PUNISHMENT]
-            # Punishment for high uncertainty (entropy). Higher scale = stronger reward for confidence.
+            # [BOLT: THE QUADRATIC ENTROPY PUNISHMENT]
+            # Refined Reward/Punishment: Punish the square of normalized entropy.
+            # This more aggressively targets high-uncertainty states while allowing natural
+            # linguistic ambiguity in low-entropy states.
             if self.config.punishment_scale > 0:
                 probs = torch.softmax(logits, dim=-1)
                 entropy = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1).mean()
-                loss = loss + self.config.punishment_scale * entropy
+                # Normalize entropy by log(vocab_size) to keep it between 0 and 1
+                norm_entropy = entropy / math.log(self.data_manager.vocab_size)
+                loss = loss + self.config.punishment_scale * (norm_entropy ** 2)
 
         # Backward pass
         self.optimizer.zero_grad(set_to_none=True)

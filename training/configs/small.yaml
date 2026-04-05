@@ -1,30 +1,30 @@
-# Bolt's Consolidated Micro-Training Config with Entropy Punishment
+# Bolt's High-Complexity Training Config with Refined Entropy Punishment
 data:
   path: 'dataset/processed/train.txt'
 
 model:
-  block_size: 128
-  n_layer: 4
-  n_head: 4
-  n_embd: 128
+  block_size: 256
+  n_layer: 6
+  n_head: 8
+  n_embd: 384
   dropout: 0.1
 
 training:
   max_steps: 100
-  batch_size: 16
+  batch_size: 32
   learning_rate: 1.0e-3
   weight_decay: 0.1
   beta1: 0.9
   beta2: 0.99
   grad_clip: 1.0
   decay_lr: True
-  warmup_iters: 5
+  warmup_iters: 20
   lr_decay_iters: 100
   min_lr: 1.0e-4
   eval_interval: 50
   log_interval: 10
   output_dir: 'out/bolt_micro_train'
-  punishment_scale: 0.1
+  punishment_scale: 0.2
 
 inference:
   temperature: 0.8
