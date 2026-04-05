@@ -1,4 +1,4 @@
-# Bolt's High-Complexity Training Config with Refined Entropy Punishment
+# Bolt's High-Complexity Training Config with Refined Entropy Punishment & Structural Warm-up
 data:
   path: 'dataset/processed/train.txt'
 
@@ -25,6 +25,7 @@ training:
   log_interval: 10
   output_dir: 'out/bolt_micro_train'
   punishment_scale: 0.2
+  penalty_warmup_iters: 50
 
 inference:
   temperature: 0.8

@@ -44,6 +44,7 @@ class TrainerConfig:
     log_interval: int = 10
     output_dir: str = 'out'
     punishment_scale: float = 0.0
+    penalty_warmup_iters: int = 0
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class Trainer:
@@ -101,31 +102,44 @@ class Trainer:
             param_group['lr'] = lr
         return lr
 
-    def _run_step(self) -> torch.Tensor:
+    def _run_step(self, step: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Executes a single forward/backward pass with gradient scaling."""
         xb, yb = self.data_manager.get_batch()
+        B, T = xb.size()
 
         # Forward pass with mixed precision
         with torch.amp.autocast(device_type=('cuda' if 'cuda' in self.device else 'cpu'),
                                 dtype=torch.float16,
                                 enabled=(self.device == 'cuda')):
             # Forward pass now returns (logits, loss, kv_cache)
-            logits, loss, _ = self.model(xb, yb)
+            logits, ce_loss, _ = self.model(xb, yb)
 
-            # [BOLT: THE QUADRATIC ENTROPY PUNISHMENT]
-            # Refined Reward/Punishment: Punish the square of normalized entropy.
-            # This more aggressively targets high-uncertainty states while allowing natural
-            # linguistic ambiguity in low-entropy states.
+            # [BOLT: THE REFINED PENALTY SCHEDULING & LENGTH-NORMALIZATION]
+            penalty = torch.tensor(0.0, device=self.device)
             if self.config.punishment_scale > 0:
+                # 1. Penalty Scheduling (Structural Warm-up)
+                current_lambda = self.config.punishment_scale
+                if step < self.config.penalty_warmup_iters:
+                    current_lambda *= (step / self.config.penalty_warmup_iters)
+
+                # 2. Length-Normalized Penalty
+                # Calculate entropy per position
                 probs = torch.softmax(logits, dim=-1)
-                entropy = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1).mean()
-                # Normalize entropy by log(vocab_size) to keep it between 0 and 1
-                norm_entropy = entropy / math.log(self.data_manager.vocab_size)
-                loss = loss + self.config.punishment_scale * (norm_entropy ** 2)
+                entropy_per_pos = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1) # (B, T)
+
+                # Weight penalty by position in sequence (0.5 to 1.5 linear ramp)
+                pos_weights = torch.linspace(0.5, 1.5, T, device=self.device).view(1, T)
+                weighted_entropy = (entropy_per_pos * pos_weights).mean()
+
+                # Quadratic punishment on normalized weighted entropy
+                norm_entropy = weighted_entropy / math.log(self.data_manager.vocab_size)
+                penalty = current_lambda * (norm_entropy ** 2)
+
+            total_loss = ce_loss + penalty
 
         # Backward pass
         self.optimizer.zero_grad(set_to_none=True)
-        self.scaler.scale(loss).backward()
+        self.scaler.scale(total_loss).backward()
 
         # Gradient clipping
         if self.config.grad_clip > 0:
@@ -136,7 +150,7 @@ class Trainer:
         self.scaler.step(self.optimizer)
         self.scaler.update()
 
-        return loss
+        return ce_loss, penalty, total_loss
 
     def run(self):
         """The main training loop."""
@@ -147,12 +161,12 @@ class Trainer:
             step_start = time.time()
 
             lr = self._update_lr(step)
-            loss = self._run_step()
+            ce_loss, penalty, total_loss = self._run_step(step)
 
             # Periodic logging
             if step % self.config.log_interval == 0 or step == self.config.max_steps - 1:
                 dt = time.time() - step_start
-                print(f"step {step:5d} | loss {loss.item():.4f} | lr {lr:.4e} | {dt*1000:.2f}ms")
+                print(f"step {step:5d} | loss {total_loss.item():.4f} (ce {ce_loss.item():.4f}, pen {penalty.item():.4f}) | lr {lr:.4e} | {dt*1000:.2f}ms")
 
             # Periodic checkpointing
             if step > 0 and step % self.config.eval_interval == 0:
