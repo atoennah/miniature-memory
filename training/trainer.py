@@ -47,6 +47,11 @@ class TrainerConfig:
     penalty_warmup_iters: int = 0
     repetition_penalty: float = 0.0
     space_token_id: int = 1
+    phonotactic_penalty: float = 0.0
+    vowel_ids: List[int] = None
+    consonant_ids: List[int] = None
+    phono_decay_start: int = 2500
+    phono_decay_iters: int = 1500
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class Trainer:
@@ -104,7 +109,7 @@ class Trainer:
             param_group['lr'] = lr
         return lr
 
-    def _run_step(self, step: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _run_step(self, step: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Executes a single forward/backward pass with gradient scaling."""
         xb, yb = self.data_manager.get_batch()
         B, T = xb.size()
@@ -129,32 +134,56 @@ class Trainer:
                 probs = torch.softmax(logits, dim=-1)
                 entropy_per_pos = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1) # (B, T)
                 pos_weights = torch.linspace(0.5, 1.5, T, device=self.device).view(1, T)
-                weighted_entropy = (entropy_per_pos * pos_weights).mean()
-                norm_entropy = weighted_entropy / math.log(self.data_manager.vocab_size)
 
                 # 3. Contextual Penalty Scaling
                 # Apply a discount factor (0.5) to positions following a space, allowing the model
                 # more freedom to choose the next word start.
+                # xb[i] is space -> logits[i] predicts token *after* space.
                 ctx_weights = torch.ones_like(entropy_per_pos)
                 is_space = (xb == self.config.space_token_id)
-                # Shift mask right to target the token *after* a space
-                after_space = torch.zeros_like(is_space)
-                after_space[:, 1:] = is_space[:, :-1]
-                ctx_weights[after_space] = 0.5
+                ctx_weights[is_space] = 0.5
 
                 # 4. N-Gram Repetition Penalty (De-Stuttering)
-                # Penalize if the model predicts the same token that appeared in the local window.
+                # Penalize if the model predicts the same token that appeared in the input at current pos.
                 rep_penalty = torch.tensor(0.0, device=self.device)
                 if self.config.repetition_penalty > 0:
-                    # Penalty for predicting what was already in the input at the same position
-                    # (effectively discouraging simple identity mappings/repeats)
                     input_one_hot = torch.zeros_like(logits).scatter_(2, xb.unsqueeze(2), 1.0)
                     overlap = (probs * input_one_hot).sum(dim=-1) # (B, T)
                     rep_penalty = self.config.repetition_penalty * (overlap * ctx_weights).mean()
 
+                # 5. Phonotactic Constraint Scaling & Cosine Decay
+                # Penalize transitions that create unnatural character clusters (e.g. 3+ consecutive consonants)
+                phono_penalty = torch.tensor(0.0, device=self.device)
+                if self.config.phonotactic_penalty > 0 and self.config.vowel_ids and self.config.consonant_ids:
+                    current_phono_lambda = self.config.phonotactic_penalty
+                    # Apply Cosine Decay to Phonotactic Penalty
+                    if step > self.config.phono_decay_start:
+                        decay_step = step - self.config.phono_decay_start
+                        if decay_step < self.config.phono_decay_iters:
+                            decay_ratio = decay_step / self.config.phono_decay_iters
+                            coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
+                            current_phono_lambda *= coeff
+                        else:
+                            current_phono_lambda = 0.0
+
+                    v_mask = torch.isin(xb, torch.tensor(self.config.vowel_ids, device=self.device)).float()
+                    c_mask = torch.isin(xb, torch.tensor(self.config.consonant_ids, device=self.device)).float()
+
+                    # Detect clusters of 2 consecutive types in the input (to penalize the 3rd)
+                    # xb[i-1] and xb[i] are same type -> logits[i] predicts 3rd in cluster.
+                    v_cluster = (v_mask[:, :-1] * v_mask[:, 1:])
+                    c_cluster = (c_mask[:, :-1] * c_mask[:, 1:])
+
+                    v_trigger = torch.zeros_like(v_mask); v_trigger[:, 1:] = v_cluster
+                    c_trigger = torch.zeros_like(c_mask); c_trigger[:, 1:] = c_cluster
+
+                    v_prob = probs[:, :, self.config.vowel_ids].sum(dim=-1)
+                    c_prob = probs[:, :, self.config.consonant_ids].sum(dim=-1)
+                    phono_penalty = current_phono_lambda * ((v_trigger * v_prob) + (c_trigger * c_prob)).mean()
+
                 # Final composite penalty
                 weighted_norm_entropy = (entropy_per_pos * pos_weights * ctx_weights).mean() / math.log(self.data_manager.vocab_size)
-                penalty = current_lambda * (weighted_norm_entropy ** 2) + rep_penalty
+                penalty = current_lambda * (weighted_norm_entropy ** 2) + rep_penalty + phono_penalty
 
             total_loss = ce_loss + penalty
 
@@ -162,16 +191,18 @@ class Trainer:
         self.optimizer.zero_grad(set_to_none=True)
         self.scaler.scale(total_loss).backward()
 
-        # Gradient clipping
+        # [BOLT: GRADIENT NORM MONITORING]
         if self.config.grad_clip > 0:
             self.scaler.unscale_(self.optimizer)
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
+            gnorm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
+        else:
+            gnorm = torch.tensor(0.0)
 
         # Optimizer step
         self.scaler.step(self.optimizer)
         self.scaler.update()
 
-        return ce_loss, penalty, total_loss
+        return ce_loss, penalty, total_loss, gnorm
 
     def run(self):
         """The main training loop."""
@@ -182,12 +213,12 @@ class Trainer:
             step_start = time.time()
 
             lr = self._update_lr(step)
-            ce_loss, penalty, total_loss = self._run_step(step)
+            ce_loss, penalty, total_loss, gnorm = self._run_step(step)
 
             # Periodic logging
             if step % self.config.log_interval == 0 or step == self.config.max_steps - 1:
                 dt = time.time() - step_start
-                print(f"step {step:5d} | loss {total_loss.item():.4f} (ce {ce_loss.item():.4f}, pen {penalty.item():.4f}) | lr {lr:.4e} | {dt*1000:.2f}ms")
+                print(f"step {step:5d} | loss {total_loss.item():.4f} (ce {ce_loss.item():.4f}, pen {penalty.item():.4f}) | gnorm {gnorm.item():.4f} | lr {lr:.4e} | {dt*1000:.2f}ms")
 
             # Periodic checkpointing
             if step > 0 and step % self.config.eval_interval == 0:

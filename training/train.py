@@ -55,6 +55,9 @@ def run_training(config: Dict[str, Any]) -> None:
         penalty_warmup_iters=int(train_cfg_dict.get('penalty_warmup_iters', 0)),
         repetition_penalty=float(train_cfg_dict.get('repetition_penalty', 0.0)),
         space_token_id=int(train_cfg_dict.get('space_token_id', 1)),
+        phonotactic_penalty=float(train_cfg_dict.get('phonotactic_penalty', 0.0)),
+        vowel_ids=train_cfg_dict.get('vowel_ids'),
+        consonant_ids=train_cfg_dict.get('consonant_ids'),
         device='cuda' if torch.cuda.is_available() else 'cpu'
     )
 
