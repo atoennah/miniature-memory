@@ -46,6 +46,7 @@ class TrainerConfig:
     punishment_scale: float = 0.0
     penalty_warmup_iters: int = 0
     repetition_penalty: float = 0.0
+    space_token_id: int = 1
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class Trainer:
@@ -131,17 +132,29 @@ class Trainer:
                 weighted_entropy = (entropy_per_pos * pos_weights).mean()
                 norm_entropy = weighted_entropy / math.log(self.data_manager.vocab_size)
 
-                # 3. N-Gram Repetition Penalty (De-Stuttering)
+                # 3. Contextual Penalty Scaling
+                # Apply a discount factor (0.5) to positions following a space, allowing the model
+                # more freedom to choose the next word start.
+                ctx_weights = torch.ones_like(entropy_per_pos)
+                is_space = (xb == self.config.space_token_id)
+                # Shift mask right to target the token *after* a space
+                after_space = torch.zeros_like(is_space)
+                after_space[:, 1:] = is_space[:, :-1]
+                ctx_weights[after_space] = 0.5
+
+                # 4. N-Gram Repetition Penalty (De-Stuttering)
                 # Penalize if the model predicts the same token that appeared in the local window.
                 rep_penalty = torch.tensor(0.0, device=self.device)
                 if self.config.repetition_penalty > 0:
                     # Penalty for predicting what was already in the input at the same position
                     # (effectively discouraging simple identity mappings/repeats)
                     input_one_hot = torch.zeros_like(logits).scatter_(2, xb.unsqueeze(2), 1.0)
-                    overlap = (probs * input_one_hot).sum(dim=-1).mean()
-                    rep_penalty = self.config.repetition_penalty * overlap
+                    overlap = (probs * input_one_hot).sum(dim=-1) # (B, T)
+                    rep_penalty = self.config.repetition_penalty * (overlap * ctx_weights).mean()
 
-                penalty = current_lambda * (norm_entropy ** 2) + rep_penalty
+                # Final composite penalty
+                weighted_norm_entropy = (entropy_per_pos * pos_weights * ctx_weights).mean() / math.log(self.data_manager.vocab_size)
+                penalty = current_lambda * (weighted_norm_entropy ** 2) + rep_penalty
 
             total_loss = ce_loss + penalty
 
