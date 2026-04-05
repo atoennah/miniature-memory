@@ -45,6 +45,7 @@ class TrainerConfig:
     output_dir: str = 'out'
     punishment_scale: float = 0.0
     penalty_warmup_iters: int = 0
+    repetition_penalty: float = 0.0
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class Trainer:
@@ -114,26 +115,33 @@ class Trainer:
             # Forward pass now returns (logits, loss, kv_cache)
             logits, ce_loss, _ = self.model(xb, yb)
 
-            # [BOLT: THE REFINED PENALTY SCHEDULING & LENGTH-NORMALIZATION]
+            # [BOLT: THE ADVANCED PENALTY SCHEDULING & N-GRAM DE-STUTTERING]
             penalty = torch.tensor(0.0, device=self.device)
             if self.config.punishment_scale > 0:
-                # 1. Penalty Scheduling (Structural Warm-up)
+                # 1. Quadratic Penalty Annealing
+                # Sharpen the penalty aggressively as training progresses to finalize morphological commitment.
                 current_lambda = self.config.punishment_scale
                 if step < self.config.penalty_warmup_iters:
-                    current_lambda *= (step / self.config.penalty_warmup_iters)
+                    current_lambda *= (step / self.config.penalty_warmup_iters) ** 2
 
-                # 2. Length-Normalized Penalty
-                # Calculate entropy per position
+                # 2. Length-Normalized Entropy Penalty
                 probs = torch.softmax(logits, dim=-1)
                 entropy_per_pos = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1) # (B, T)
-
-                # Weight penalty by position in sequence (0.5 to 1.5 linear ramp)
                 pos_weights = torch.linspace(0.5, 1.5, T, device=self.device).view(1, T)
                 weighted_entropy = (entropy_per_pos * pos_weights).mean()
-
-                # Quadratic punishment on normalized weighted entropy
                 norm_entropy = weighted_entropy / math.log(self.data_manager.vocab_size)
-                penalty = current_lambda * (norm_entropy ** 2)
+
+                # 3. N-Gram Repetition Penalty (De-Stuttering)
+                # Penalize if the model predicts the same token that appeared in the local window.
+                rep_penalty = torch.tensor(0.0, device=self.device)
+                if self.config.repetition_penalty > 0:
+                    # Penalty for predicting what was already in the input at the same position
+                    # (effectively discouraging simple identity mappings/repeats)
+                    input_one_hot = torch.zeros_like(logits).scatter_(2, xb.unsqueeze(2), 1.0)
+                    overlap = (probs * input_one_hot).sum(dim=-1).mean()
+                    rep_penalty = self.config.repetition_penalty * overlap
+
+                penalty = current_lambda * (norm_entropy ** 2) + rep_penalty
 
             total_loss = ce_loss + penalty
 

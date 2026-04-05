@@ -53,6 +53,7 @@ def run_training(config: Dict[str, Any]) -> None:
         output_dir=train_cfg_dict.get('output_dir', 'out'),
         punishment_scale=float(train_cfg_dict.get('punishment_scale', 0.0)),
         penalty_warmup_iters=int(train_cfg_dict.get('penalty_warmup_iters', 0)),
+        repetition_penalty=float(train_cfg_dict.get('repetition_penalty', 0.0)),
         device='cuda' if torch.cuda.is_available() else 'cpu'
     )
 
