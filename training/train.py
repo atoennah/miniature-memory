@@ -58,6 +58,9 @@ def run_training(config: Dict[str, Any]) -> None:
         phonotactic_penalty=float(train_cfg_dict.get('phonotactic_penalty', 0.0)),
         vowel_ids=train_cfg_dict.get('vowel_ids'),
         consonant_ids=train_cfg_dict.get('consonant_ids'),
+        phono_decay_start=int(train_cfg_dict.get('phono_decay_start', 2500)),
+        phono_decay_iters=int(train_cfg_dict.get('phono_decay_iters', 1500)),
+        augment_prob=float(train_cfg_dict.get('augment_prob', 0.0)),
         device='cuda' if torch.cuda.is_available() else 'cpu'
     )
 

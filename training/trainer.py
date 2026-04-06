@@ -25,6 +25,7 @@ from dataclasses import dataclass
 
 from .data_loader import DataManager
 from .model import GPT, GPTConfig
+from .governor import LinguisticGovernor
 
 @dataclass
 class TrainerConfig:
@@ -52,6 +53,7 @@ class TrainerConfig:
     consonant_ids: List[int] = None
     phono_decay_start: int = 2500
     phono_decay_iters: int = 1500
+    augment_prob: float = 0.0
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class Trainer:
@@ -82,6 +84,9 @@ class Trainer:
         # Mixed precision setup
         self.scaler = torch.amp.GradScaler(enabled=(self.device == 'cuda'))
 
+        # Linguistic Governor
+        self.governor = LinguisticGovernor(config, data_manager.vocab_size, self.device)
+
         print(f"Trainer: Initialized on {self.device} with {sum(p.numel() for p in self.model.parameters())} parameters.")
 
     def _get_lr(self, it: int) -> float:
@@ -111,80 +116,14 @@ class Trainer:
 
     def _run_step(self, step: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Executes a single forward/backward pass with gradient scaling."""
-        xb, yb = self.data_manager.get_batch()
-        B, T = xb.size()
+        xb, yb = self.data_manager.get_batch(augment_prob=self.config.augment_prob)
 
         # Forward pass with mixed precision
         with torch.amp.autocast(device_type=('cuda' if 'cuda' in self.device else 'cpu'),
                                 dtype=torch.float16,
                                 enabled=(self.device == 'cuda')):
-            # Forward pass now returns (logits, loss, kv_cache)
             logits, ce_loss, _ = self.model(xb, yb)
-
-            # [BOLT: THE ADVANCED PENALTY SCHEDULING & N-GRAM DE-STUTTERING]
-            penalty = torch.tensor(0.0, device=self.device)
-            if self.config.punishment_scale > 0:
-                # 1. Quadratic Penalty Annealing
-                # Sharpen the penalty aggressively as training progresses to finalize morphological commitment.
-                current_lambda = self.config.punishment_scale
-                if step < self.config.penalty_warmup_iters:
-                    current_lambda *= (step / self.config.penalty_warmup_iters) ** 2
-
-                # 2. Length-Normalized Entropy Penalty
-                probs = torch.softmax(logits, dim=-1)
-                entropy_per_pos = -torch.sum(probs * torch.log(probs + 1e-9), dim=-1) # (B, T)
-                pos_weights = torch.linspace(0.5, 1.5, T, device=self.device).view(1, T)
-
-                # 3. Contextual Penalty Scaling
-                # Apply a discount factor (0.5) to positions following a space, allowing the model
-                # more freedom to choose the next word start.
-                # xb[i] is space -> logits[i] predicts token *after* space.
-                ctx_weights = torch.ones_like(entropy_per_pos)
-                is_space = (xb == self.config.space_token_id)
-                ctx_weights[is_space] = 0.5
-
-                # 4. N-Gram Repetition Penalty (De-Stuttering)
-                # Penalize if the model predicts the same token that appeared in the input at current pos.
-                rep_penalty = torch.tensor(0.0, device=self.device)
-                if self.config.repetition_penalty > 0:
-                    input_one_hot = torch.zeros_like(logits).scatter_(2, xb.unsqueeze(2), 1.0)
-                    overlap = (probs * input_one_hot).sum(dim=-1) # (B, T)
-                    rep_penalty = self.config.repetition_penalty * (overlap * ctx_weights).mean()
-
-                # 5. Phonotactic Constraint Scaling & Cosine Decay
-                # Penalize transitions that create unnatural character clusters (e.g. 3+ consecutive consonants)
-                phono_penalty = torch.tensor(0.0, device=self.device)
-                if self.config.phonotactic_penalty > 0 and self.config.vowel_ids and self.config.consonant_ids:
-                    current_phono_lambda = self.config.phonotactic_penalty
-                    # Apply Cosine Decay to Phonotactic Penalty
-                    if step > self.config.phono_decay_start:
-                        decay_step = step - self.config.phono_decay_start
-                        if decay_step < self.config.phono_decay_iters:
-                            decay_ratio = decay_step / self.config.phono_decay_iters
-                            coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
-                            current_phono_lambda *= coeff
-                        else:
-                            current_phono_lambda = 0.0
-
-                    v_mask = torch.isin(xb, torch.tensor(self.config.vowel_ids, device=self.device)).float()
-                    c_mask = torch.isin(xb, torch.tensor(self.config.consonant_ids, device=self.device)).float()
-
-                    # Detect clusters of 2 consecutive types in the input (to penalize the 3rd)
-                    # xb[i-1] and xb[i] are same type -> logits[i] predicts 3rd in cluster.
-                    v_cluster = (v_mask[:, :-1] * v_mask[:, 1:])
-                    c_cluster = (c_mask[:, :-1] * c_mask[:, 1:])
-
-                    v_trigger = torch.zeros_like(v_mask); v_trigger[:, 1:] = v_cluster
-                    c_trigger = torch.zeros_like(c_mask); c_trigger[:, 1:] = c_cluster
-
-                    v_prob = probs[:, :, self.config.vowel_ids].sum(dim=-1)
-                    c_prob = probs[:, :, self.config.consonant_ids].sum(dim=-1)
-                    phono_penalty = current_phono_lambda * ((v_trigger * v_prob) + (c_trigger * c_prob)).mean()
-
-                # Final composite penalty
-                weighted_norm_entropy = (entropy_per_pos * pos_weights * ctx_weights).mean() / math.log(self.data_manager.vocab_size)
-                penalty = current_lambda * (weighted_norm_entropy ** 2) + rep_penalty + phono_penalty
-
+            penalty = self.governor.calculate_penalty(logits, xb, step)
             total_loss = ce_loss + penalty
 
         # Backward pass

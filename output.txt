@@ -2,9 +2,9 @@ Generator: Loading tokenizer from cache: dataset/processed/train.txt_meta.pkl
 Generator: Loading checkpoint from out/bolt_micro_train/model_final.pt
 Generator: Using cpu. Generating 100 tokens...
 ----------------------------------------
-Aku, yang lahir sebagai keturunan campuran ayah manusia dan ibu Ime, sia h mu melal metant pa sela dan i marsi lakengangoing bu ya k kakeri dahanan pitamu melan manyala
+Aku, yang lahir sebagai keturunan campuran ayah manusia dan ibu Ime, berapi ma betanata tangangataka dang dinyanyanga k ka daha san bengingan senan kan ku k kunyananya
 ----------------------------------------
 Bolt Metrics:
-  - TPS: 64.63
-  - Latency: 1.55s
-  - RAM Delta: 25.56MB (Peak: 577.88MB)
+  - TPS: 202.87
+  - Latency: 0.49s
+  - RAM Delta: 18.90MB (Peak: 460.26MB)

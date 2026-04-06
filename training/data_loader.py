@@ -117,10 +117,11 @@ class DataManager:
         self.encode: Callable[[str], List[int]] = lambda s: [stoi_cached.get(c, 0) for c in s]
         self.decode: Callable[[List[int]], str] = lambda l: ''.join([itos_cached.get(i, '') for i in l])
 
-    def get_batch(self) -> Tuple[torch.Tensor, torch.Tensor]:
+    def get_batch(self, augment_prob: float = 0.0) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Generates a small batch of data of inputs x and targets y.
         Uses vectorized NumPy indexing for maximum throughput.
+        Optional character-level synthetic augmentation for dataset diversity.
         """
         # Generate random starting indices
         ix = np.random.randint(0, len(self.data) - self.block_size, (self.batch_size,))
@@ -133,6 +134,13 @@ class DataManager:
         # Index into memmap with 2D array of indices
         x_np = self.data[ix_x].astype(np.int64)
         y_np = self.data[ix_y].astype(np.int64)
+
+        # [BOLT: SYNTHETIC AUGMENTATION]
+        # Random character substitution to improve model robustness and dataset diversity.
+        if augment_prob > 0:
+            mask = np.random.random(x_np.shape) < augment_prob
+            random_tokens = np.random.randint(0, self.vocab_size, x_np.shape)
+            x_np[mask] = random_tokens[mask]
 
         x = torch.from_numpy(x_np).to(self.device)
         y = torch.from_numpy(y_np).to(self.device)

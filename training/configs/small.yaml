@@ -1,38 +1,39 @@
-# Bolt's Extreme-Complexity Training Config (Mad Scientist Deep Training Phase)
+# Bolt's Reconstructed High-Complexity Config (Deep-Sea Predator Iteration)
 data:
   path: 'dataset/processed/train.txt'
 
 model:
   block_size: 256
-  n_layer: 8
+  n_layer: 6
   n_head: 8
-  n_embd: 512
+  n_embd: 384
   dropout: 0.1
 
 training:
-  max_steps: 5000
-  batch_size: 16
-  learning_rate: 5.0e-4
+  max_steps: 100
+  batch_size: 32
+  learning_rate: 1.0e-3
   weight_decay: 0.1
   beta1: 0.9
   beta2: 0.99
   grad_clip: 1.0
   decay_lr: True
-  warmup_iters: 200
-  lr_decay_iters: 5000
-  min_lr: 5.0e-5
-  eval_interval: 250
-  log_interval: 50
+  warmup_iters: 20
+  lr_decay_iters: 100
+  min_lr: 1.0e-4
+  eval_interval: 50
+  log_interval: 10
   output_dir: 'out/bolt_micro_train'
   punishment_scale: 0.3
-  penalty_warmup_iters: 1000
+  penalty_warmup_iters: 50
   repetition_penalty: 0.5
   space_token_id: 1
   phonotactic_penalty: 0.5
   vowel_ids: [50, 58, 70, 54, 64, 23, 31, 43, 27, 37]
   consonant_ids: [51, 52, 53, 55, 56, 57, 59, 60, 61, 62, 63, 65, 66, 67, 68, 69, 71, 72, 73, 74, 75, 24, 25, 26, 28, 29, 30, 32, 33, 34, 35, 36, 38, 39, 40, 41, 42, 44, 45, 46, 47, 48]
-  phono_decay_start: 2500
-  phono_decay_iters: 1500
+  phono_decay_start: 50
+  phono_decay_iters: 50
+  augment_prob: 0.05
 
 inference:
   temperature: 0.8
