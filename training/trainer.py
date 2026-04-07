@@ -25,6 +25,7 @@ from dataclasses import dataclass
 
 from .data_loader import DataManager
 from .model import GPT, GPTConfig
+from .governor import LinguisticGovernor
 
 @dataclass
 class TrainerConfig:
@@ -43,6 +44,16 @@ class TrainerConfig:
     eval_interval: int = 100
     log_interval: int = 10
     output_dir: str = 'out'
+    punishment_scale: float = 0.0
+    penalty_warmup_iters: int = 0
+    repetition_penalty: float = 0.0
+    space_token_id: int = 1
+    phonotactic_penalty: float = 0.0
+    vowel_ids: List[int] = None
+    consonant_ids: List[int] = None
+    phono_decay_start: int = 2500
+    phono_decay_iters: int = 1500
+    augment_prob: float = 0.0
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class Trainer:
@@ -73,6 +84,9 @@ class Trainer:
         # Mixed precision setup
         self.scaler = torch.amp.GradScaler(enabled=(self.device == 'cuda'))
 
+        # Linguistic Governor
+        self.governor = LinguisticGovernor(config, data_manager.vocab_size, self.device)
+
         print(f"Trainer: Initialized on {self.device} with {sum(p.numel() for p in self.model.parameters())} parameters.")
 
     def _get_lr(self, it: int) -> float:
@@ -100,31 +114,34 @@ class Trainer:
             param_group['lr'] = lr
         return lr
 
-    def _run_step(self) -> torch.Tensor:
+    def _run_step(self, step: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Executes a single forward/backward pass with gradient scaling."""
-        xb, yb = self.data_manager.get_batch()
+        xb, yb = self.data_manager.get_batch(augment_prob=self.config.augment_prob)
 
         # Forward pass with mixed precision
         with torch.amp.autocast(device_type=('cuda' if 'cuda' in self.device else 'cpu'),
                                 dtype=torch.float16,
                                 enabled=(self.device == 'cuda')):
-            # Forward pass now returns (logits, loss, kv_cache)
-            _, loss, _ = self.model(xb, yb)
+            logits, ce_loss, _ = self.model(xb, yb)
+            penalty = self.governor.calculate_penalty(logits, xb, step)
+            total_loss = ce_loss + penalty
 
         # Backward pass
         self.optimizer.zero_grad(set_to_none=True)
-        self.scaler.scale(loss).backward()
+        self.scaler.scale(total_loss).backward()
 
-        # Gradient clipping
+        # [BOLT: GRADIENT NORM MONITORING]
         if self.config.grad_clip > 0:
             self.scaler.unscale_(self.optimizer)
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
+            gnorm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
+        else:
+            gnorm = torch.tensor(0.0)
 
         # Optimizer step
         self.scaler.step(self.optimizer)
         self.scaler.update()
 
-        return loss
+        return ce_loss, penalty, total_loss, gnorm
 
     def run(self):
         """The main training loop."""
@@ -135,12 +152,12 @@ class Trainer:
             step_start = time.time()
 
             lr = self._update_lr(step)
-            loss = self._run_step()
+            ce_loss, penalty, total_loss, gnorm = self._run_step(step)
 
             # Periodic logging
             if step % self.config.log_interval == 0 or step == self.config.max_steps - 1:
                 dt = time.time() - step_start
-                print(f"step {step:5d} | loss {loss.item():.4f} | lr {lr:.4e} | {dt*1000:.2f}ms")
+                print(f"step {step:5d} | loss {total_loss.item():.4f} (ce {ce_loss.item():.4f}, pen {penalty.item():.4f}) | gnorm {gnorm.item():.4f} | lr {lr:.4e} | {dt*1000:.2f}ms")
 
             # Periodic checkpointing
             if step > 0 and step % self.config.eval_interval == 0:

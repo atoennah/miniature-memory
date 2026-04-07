@@ -51,6 +51,16 @@ def run_training(config: Dict[str, Any]) -> None:
         eval_interval=train_cfg_dict.get('eval_interval', 100),
         log_interval=train_cfg_dict.get('log_interval', 10),
         output_dir=train_cfg_dict.get('output_dir', 'out'),
+        punishment_scale=float(train_cfg_dict.get('punishment_scale', 0.0)),
+        penalty_warmup_iters=int(train_cfg_dict.get('penalty_warmup_iters', 0)),
+        repetition_penalty=float(train_cfg_dict.get('repetition_penalty', 0.0)),
+        space_token_id=int(train_cfg_dict.get('space_token_id', 1)),
+        phonotactic_penalty=float(train_cfg_dict.get('phonotactic_penalty', 0.0)),
+        vowel_ids=train_cfg_dict.get('vowel_ids'),
+        consonant_ids=train_cfg_dict.get('consonant_ids'),
+        phono_decay_start=int(train_cfg_dict.get('phono_decay_start', 2500)),
+        phono_decay_iters=int(train_cfg_dict.get('phono_decay_iters', 1500)),
+        augment_prob=float(train_cfg_dict.get('augment_prob', 0.0)),
         device='cuda' if torch.cuda.is_available() else 'cpu'
     )
 
